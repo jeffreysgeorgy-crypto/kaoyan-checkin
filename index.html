@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>考研学习打卡</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#3f8f62">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="考研打卡">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="stylesheet" href="style.css?v=20260915l">
+</head>
+<body>
+
+<header class="header">
+  <h1>📚 考研学习打卡</h1>
+  <p class="today-info" id="todayInfo"></p>
+  <div class="countdown" id="countdown"></div>
+  <div class="math-progress" id="mathProgress"></div>
+</header>
+
+<main class="container">
+
+  <!-- ========== 工作台 1：今日时间轴（Today） ========== -->
+  <section class="tab-panel active" id="panel-today">
+
+    <div class="design-alert" id="designAlert" hidden></div>
+
+    <!-- 单词进度小卡片 -->
+    <section class="card card-wordmini">
+      <div class="word-mini" id="wordMini"></div>
+    </section>
+
+    <!-- 今日时间轴（核心：按时间顺序展示当天所有课和考研任务；可前后翻页/跳转日期） -->
+    <section class="card card-timeline">
+      <h2 class="card-title">⏱️ 今日时间轴</h2>
+      <div class="tl-date-nav">
+        <button class="btn btn-ghost btn-sm" id="tlPrevDay" type="button">‹ 前一天</button>
+        <input type="date" id="tlDatePick" class="tl-date-pick" aria-label="选择查看日期">
+        <button class="btn btn-ghost btn-sm" id="tlNextDay" type="button">后一天 ›</button>
+        <button class="btn btn-ghost btn-sm" id="tlBackToday" type="button">回到今天</button>
+      </div>
+      <div class="cet6-alert" id="cet6Alert" hidden></div>
+      <div class="timeline-goal" id="timelineGoal"></div>
+      <div class="timeline" id="timeline"></div>
+      <p class="hint">按时间段排列 · 待办池任务标红置顶 · 超时未打卡会闪烁提醒 · 可点前一天/后一天或直接选日期查看任务</p>
+    </section>
+
+
+
+    
+
+    <!-- 旧任务系统容器（数据仍在维护，界面已由「分类任务清单」工作台取代） -->
+    <div id="taskList" class="task-list" hidden></div>
+    <div id="taskSummary" hidden></div>
+
+  </section>
+
+  <!-- ========== 工作台：专注（Focus · 番茄钟独立页） ========== -->
+  <section class="tab-panel" id="panel-focus">
+
+    <!-- 今日专注概览 -->
+    <section class="card card-focus-overview">
+      <h2 class="card-title">📊 今日专注概览</h2>
+      <div id="focusOverview"></div>
+    </section>
+
+    <!-- 番茄钟计时器 -->
+    <section class="card card-pomo">
+      <h2 class="card-title">🍅 专注计时器</h2>
+      <div class="pomo-pref" id="pomoPrefFocus"></div>
+      <div class="pomo">
+        <div class="pomo-mode focus" id="pomoMode">专注</div>
+        <div class="pomo-time" id="pomoTime">25:00</div>
+        <div class="pomo-task-input">
+          <label for="pomoTaskName">本次专注事项</label>
+          <input type="text" id="pomoTaskName" maxlength="40" placeholder="如：数学严选题、数据结构王道课">
+        </div>
+        <div class="pomo-current-task" id="pomoCurrentTask"></div>
+        <div class="pomo-controls">
+          <button class="btn btn-primary" id="pomoStart">开始</button>
+          <button class="btn btn-ghost" id="pomoReset">重置</button>
+        </div>
+        <div class="pomo-count" id="pomoCount">今日专注：0 个番茄钟</div>
+      </div>
+    </section>
+
+    <!-- 专注记录（今天 / 近一周 / 近一月，含饼图分布） -->
+    <section class="card card-focus-log">
+      <h2 class="card-title">📜 专注记录</h2>
+      <div class="focus-range-tabs" id="focusRangeTabs">
+        <button class="focus-range-tab active" type="button" data-range="today">今天</button>
+        <button class="focus-range-tab" type="button" data-range="week">近一周</button>
+        <button class="focus-range-tab" type="button" data-range="month">近一月</button>
+      </div>
+      <div class="focus-chart-wrap" id="focusChartWrap">
+        <canvas id="focusPie"></canvas>
+        <div class="focus-pie-fallback" id="focusPieFallback" hidden></div>
+      </div>
+      <div class="focus-legend" id="focusLegend"></div>
+      <div id="focusLogList"></div>
+    </section>
+
+  </section>
+
+  <!-- ========== 工作台 2：分类任务清单（Tasks） ========== -->
+  <section class="tab-panel" id="panel-tasks">
+    <section class="card card-tasks">
+      <h2 class="card-title">✅ 分类任务清单</h2>
+      <!-- 学科切换栏 -->
+      <div class="subject-tabs" id="subjectTabs"></div>
+      <!-- 任务清单容器（由 renderTasksPage 渲染） -->
+      <div id="tasksList"></div>
+      <p class="hint">顶部切换学科 · 每个任务卡含打卡复选框 / 1-5 星效率评分 / 有效学习时长</p>
+    </section>
+  </section>
+
+  <!-- ========== 工作台 3：课表（Schedule） ========== -->
+  <section class="tab-panel" id="panel-schedule">
+
+    <!-- 星期切换栏 -->
+    <section class="card card-schedule">
+      <h2 class="card-title">📅 按日查看课表</h2>
+      <div class="weekday-tabs" id="weekdayTabs"></div>
+      <div id="dayCourses" class="day-courses"></div>
+    </section>
+
+    <div class="week-nav">
+      <button class="btn btn-ghost btn-sm" id="weekPrev">‹ 上一周</button>
+      <span class="week-label" id="weekLabel">第 X 周</span>
+      <button class="btn btn-ghost btn-sm" id="weekNext">下一周 ›</button>
+      <button class="btn btn-ghost btn-sm" id="weekToday">回到本周</button>
+    </div>
+    <div class="card card-schedule">
+      <h2 class="card-title">📅 本周课表</h2>
+      <div id="scheduleGrid"></div>
+      <p class="schedule-note">只显示当周真正有课的节次 · 国庆假期 10.1–10.7 无课 · 下午统一 14:30 开始。</p>
+    </div>
+
+    <div class="card card-schedule">
+      <h2 class="card-title">📋 我的固定课表</h2>
+      <p class="hint">按节次列出整学期课程。</p>
+      <div id="fixedSchedule" class="fixed-schedule"></div>
+    </div>
+
+  </section>
+
+  <!-- ========== 工作台 4：错题本（Mistakes） ========== -->
+  <section class="tab-panel" id="panel-mistakes">
+    <section class="card card-mistakes">
+      <h2 class="card-title">📚 错题本</h2>
+      <div class="error-book" id="errorBook"></div>
+    </section>
+  </section>
+
+  <!-- ========== 工作台 5：今日反思（Reflection） ========== -->
+  <section class="tab-panel" id="panel-reflection">
+    <section class="card card-reflect">
+      <h2 class="card-title">📝 今日反思</h2>
+      <div class="field">
+        <label for="reflectAccomplishment">最有成就感的事</label>
+        <textarea id="reflectAccomplishment" rows="2" placeholder="今天做成了什么？"></textarea>
+      </div>
+      <div class="field">
+        <label for="reflectConfusion">没搞懂的知识点</label>
+        <textarea id="reflectConfusion" rows="2" placeholder="哪个知识点卡住了？"></textarea>
+      </div>
+      <div class="field">
+        <label for="reflectTomorrow">明天优先解决的事</label>
+        <textarea id="reflectTomorrow" rows="2" placeholder="明天最重要的 1-2 件事？"></textarea>
+      </div>
+    </section>
+    <section class="card card-reflect-history">
+      <h2 class="card-title">📅 历史反思</h2>
+      <div id="reflectionHistory"></div>
+      <p class="hint">自动展示最近 14 天内有内容的反思记录，方便回顾与复盘。</p>
+    </section>
+  </section>
+
+  <!-- ========== 工作台 6：统计（Stats） ========== -->
+  <section class="tab-panel" id="panel-stats">
+
+    <!-- 考研进度：常驻顶部 -->
+    <section class="card card-progress">
+      <h2 class="card-title">考研进度</h2>
+      <div class="progress-item">
+        <div class="progress-head">
+          <span class="progress-name">数学一轮</span>
+          <span class="progress-pct" id="mathPct">0%</span>
+        </div>
+        <div class="progress-ctrl">
+          <span class="ctrl-label">已完成</span>
+          <select id="mathChapter" aria-label="数学当前章节"></select>
+          <span class="ctrl-suffix">/ 共 10 章</span>
+        </div>
+        <div class="bar"><div class="bar-fill fill-math" id="mathBar"></div></div>
+      </div>
+      <div class="progress-item">
+        <div class="progress-head">
+          <span class="progress-name">专业课一轮（数据结构 / 计组）</span>
+          <span class="progress-pct" id="majorPct">0%</span>
+        </div>
+        <div class="progress-ctrl">
+          <span class="ctrl-label">已完成</span>
+          <select id="majorChapter" aria-label="专业课当前章节"></select>
+          <span class="ctrl-label">总章节</span>
+          <select id="majorTotal" aria-label="专业课总章节"></select>
+        </div>
+        <div class="bar"><div class="bar-fill fill-major" id="majorBar"></div></div>
+      </div>
+    </section>
+
+    <!-- 统计标签页切换栏 -->
+    <div class="stats-tab-bar" id="statsTabBar">
+      <button class="stats-tab active" data-statstab="words">📖 单词打卡</button>
+      <button class="stats-tab" data-statstab="problems">📊 刷题量</button>
+      <button class="stats-tab" data-statstab="time">⏱️ 学习时长</button>
+      <button class="stats-tab" data-statstab="procrast">🐢 拖延统计</button>
+    </div>
+
+    <!-- 标签页 1：单词打卡 -->
+    <section class="stats-tab-panel active" data-statstab-panel="words">
+      <section class="card card-wordprogress">
+        <h2 class="card-title">📖 单词进度</h2>
+        <div id="wordProgress"></div>
+      </section>
+      <section class="card card-wordstats">
+        <h2 class="card-title">📚 单词打卡目标</h2>
+        <div id="wordStatsCard"></div>
+      </section>
+    </section>
+
+    <!-- 标签页 2：刷题量 -->
+    <section class="stats-tab-panel" data-statstab-panel="problems">
+      <section class="card card-chart">
+        <h2 class="card-title">📊 近 7 天刷题趋势</h2>
+        <div class="chart-box"><canvas id="chart"></canvas></div>
+        <div id="chartFallback"></div>
+      </section>
+    </section>
+
+    <!-- 标签页 3：学习时长 -->
+    <section class="stats-tab-panel" data-statstab-panel="time">
+      <section class="card">
+        <h2 class="card-title">⏱️ 有效学习时长</h2>
+        <div class="study-time" id="studyTime"></div>
+        <p class="hint">页面打开且可见时自动累计学习时长，每 45 分钟弹窗提醒休息 5 分钟。</p>
+      </section>
+      <section class="card">
+        <h2 class="card-title">🍅 番茄钟累计</h2>
+        <div id="pomoStats"></div>
+      </section>
+    </section>
+
+    <!-- 标签页 4：拖延统计 -->
+    <section class="stats-tab-panel" data-statstab-panel="procrast">
+      <section class="card card-procrastination">
+        <h2 class="card-title">🐢 本周拖延统计</h2>
+        <div id="procrastinationStats"></div>
+      </section>
+    </section>
+
+    <!-- 底部：战报 + 历史记录（常驻） -->
+    <section class="card card-report">
+      <h2 class="card-title">📤 本周战报</h2>
+      <p class="hint">一键生成本周学习报告图片，可保存发朋友圈打卡。</p>
+      <button class="btn btn-primary" id="reportBtn">📊 生成本周战报</button>
+    </section>
+
+    <section class="card card-history">
+      <h2 class="card-title">📅 历史打卡记录</h2>
+      <div class="history-toolbar">
+        <div class="history-stat" id="historyStat"></div>
+        <button class="btn btn-ghost btn-sm" id="historyFilter">只看全勤</button>
+      </div>
+      <div id="historyList"></div>
+    </section>
+
+  </section>
+
+  <!-- ========== 工作台 7：我的（Me） ========== -->
+  <section class="tab-panel" id="panel-me">
+
+    <section class="card card-settings">
+      <h2 class="card-title">⚙️ 设置</h2>
+
+      <div class="settings-group">
+        <div class="settings-label">📅 考试日期</div>
+        <div class="settings-row">
+          <label>考研初试 <input type="date" id="setExamDate"></label>
+          <label>六级考试 <input type="date" id="setCet6Date"></label>
+          <button class="btn btn-primary btn-sm" id="settingsDateBtn">保存日期</button>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-label">🍅 番茄钟时长</div>
+        <div class="pomo-pref" id="pomoPrefSettings"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">🔤 单词设置</h2>
+      <div id="wordGoal"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">💾 数据备份</h2>
+      <div class="data-actions">
+        <button class="btn btn-ghost" id="exportBtn">导出数据 (JSON)</button>
+        <button class="btn btn-ghost" id="backupBtn">导出备份 (含计划表)</button>
+        <label class="btn btn-ghost" for="importFile">📁 导入备份</label>
+        <input type="file" id="importFile" accept=".json" hidden>
+        <button class="btn btn-ghost danger" id="resetBtn">清空全部数据</button>
+      </div>
+      <p class="hint">导出备份含 DAILY_PLAN_DATA + 打卡记录 + 错题本，可跨设备恢复。</p>
+    </section>
+
+  </section>
+
+</main>
+
+<!-- 侧边导航：桌面端固定左侧，手机端（≤900px）变为底部 Tab Bar -->
+<nav class="tabbar">
+  <button class="tab active" data-tab="today"><span>🏠</span>今日</button>
+  <button class="tab" data-tab="tasks"><span>📋</span>任务</button>
+  <button class="tab" data-tab="schedule"><span>📅</span>课表</button>
+  <button class="tab" data-tab="mistakes"><span>📚</span>错题</button>
+  <button class="tab" data-tab="reflection"><span>📝</span>反思</button>
+  <button class="tab" data-tab="stats"><span>📊</span>统计</button>
+  <button class="tab" data-tab="me"><span>⚙️</span>我的</button>
+  <button class="tab" data-tab="focus"><span>🍅</span>专注</button>
+</nav>
+
+<!-- 弹窗（休息提醒 / 战报 / 错题原图） -->
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal" id="modalContent"></div>
+</div>
+
+<!-- 错题本复习模式（全屏卡片） -->
+<div class="eb-review-overlay" id="ebReviewOverlay" hidden>
+  <div class="eb-review-card" id="ebReviewCard"></div>
+  <button class="eb-review-close" id="ebReviewClose">✕ 退出复习</button>
+</div>
+
+<!-- 战报渲染目标（离屏，供 html2canvas 截图） -->
+<div id="reportRoot" class="report-root"></div>
+
+<script src="data.js?v=20260915l"></script>
+<script src="app.js?v=20260915l"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(function (err) {
+    console.warn('SW 注册失败:', err);
+  });
+}
+</script>
+</body>
+</html>

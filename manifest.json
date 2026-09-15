@@ -1,0 +1,19 @@
+{
+  "name": "考研学习打卡",
+  "short_name": "考研打卡",
+  "description": "考研每日时间轴、任务打卡、课表、专注计时、单词进度统计",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#3f8f62",
+  "background_color": "#edf2ee",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
