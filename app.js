@@ -2080,11 +2080,39 @@ function saveTimelineEdit() {
   ensureDay(state, editingDate);
   ensureTimeline(state, editingDate);
   const b = findTimelineBlock(state, editingDate, editingBlock.id);
-  if (b) { b.name = name; b.note = note; if (start) b.start = start; if (end) b.end = end; b.customEdit = true; }
+  if (b) {
+    const oldName = b.name || '';
+    b.name = name;
+    b.note = note;
+    if (start) b.start = start;
+    if (end) b.end = end;
+    b.customEdit = true;
+    // 任务名修改后同步到所有日期的 focusLog（含"（手动补录）"后缀的条目），保证专注记录显示最新名称
+    if (oldName && oldName !== name) {
+      const manualSuffix = '（手动补录）';
+      Object.keys(state.days || {}).forEach(function (d) {
+        const day = state.days[d];
+        const log = day && day.focusLog;
+        if (!log || !log.length) return;
+        log.forEach(function (x) {
+          if (!x.name) return;
+          if (x.name === oldName) {
+            x.name = name;
+          } else if (x.name === oldName + manualSuffix) {
+            x.name = name + manualSuffix;
+          }
+        });
+      });
+    }
+  }
   saveState(state);
   closeModal();
   renderTimeline(state, timelineViewDate);
   renderTasksPage(state, tasksViewDate);
+  // 若专注面板已渲染，立即刷新记录与饼图，保持同步
+  if (typeof renderFocusLog === 'function') {
+    try { renderFocusLog(state); } catch (e) {}
+  }
 }
 
 /* ---------- 任务页：手动添加任务弹窗 ---------- */
@@ -2850,7 +2878,7 @@ function fmtClock(ts) {
 /* 专注记录：时间范围（今天/近一周/近一月）+ 按事项聚合饼图 */
 let focusRange = 'today';           // today | week | month
 let focusPieChart = null;           // Chart.js 实例，切换范围时销毁重建
-const FOCUS_COLORS = ['#e0705a', '#5b7fd0', '#4c9f6b', '#2f8fa8', '#8e6fd0', '#d0607a', '#e8a33d', '#6aa66b', '#c4568c', '#5a8fb8'];
+const FOCUS_COLORS = ['#f8bbd0', '#f48fb1', '#ce93d8', '#b39ddb', '#ffab91', '#ffccbc', '#fff59d', '#ffe0b2', '#d7ccc8', '#f0c6d8'];
 
 function renderFocusPage(state) {
   renderFocusOverview(state);
@@ -2936,6 +2964,44 @@ function renderFocusPie(entries) {
     fallback.hidden = true;
     fallback.innerHTML = '';
     canvas.style.display = '';
+    // 内联插件：在饼图扇区上绘制"名称 + 时长"
+    const pieLabelPlugin = {
+      id: 'focusPieLabels',
+      afterDatasetsDraw: function (chart) {
+        const ctx = chart.ctx;
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data || !meta.data.length) return;
+        const arr = chart.data.datasets[0].data || [];
+        const labels = chart.data.labels || [];
+        ctx.save();
+        meta.data.forEach(function (arc, i) {
+          const value = arr[i] || 0;
+          if (value <= 0) return;
+          // 扇区足够大才显示文字，避免重叠
+          const span = Math.abs(arc.endAngle - arc.startAngle);
+          if (span < 0.22) return; // 约 12.6° 以内不显示
+          const midAngle = (arc.startAngle + arc.endAngle) / 2;
+          const outerR = Math.max(arc.outerRadius, 1);
+          const innerR = Math.max(arc.innerRadius || 0, 0);
+          const r = (outerR + innerR) / 2;
+          const tx = arc.x + Math.cos(midAngle) * r;
+          const ty = arc.y + Math.sin(midAngle) * r;
+          // 名称（超过 6 字截断）
+          const rawName = labels[i] || '';
+          const nameStr = rawName.length > 6 ? rawName.slice(0, 6) + '…' : rawName;
+          const durStr = fmtMinutes(value);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.font = '600 11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+          ctx.fillStyle = '#5a3a45';
+          ctx.fillText(nameStr, tx, ty - 7);
+          ctx.font = '700 11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+          ctx.fillStyle = '#7d3a52';
+          ctx.fillText(durStr, tx, ty + 7);
+        });
+        ctx.restore();
+      },
+    };
     focusPieChart = new Chart(canvas.getContext('2d'), {
       type: 'doughnut',
       data: {
@@ -2964,6 +3030,7 @@ function renderFocusPie(entries) {
           },
         },
       },
+      plugins: [pieLabelPlugin],
     });
   } else {
     // 降级：按百分比横向拼接色块（先 destroy，Chart 会还原 canvas 行内样式）

@@ -973,7 +973,7 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 /* ========== 专注工作台（独立页） ========== */
 .focus-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .focus-stat-item { background: #fff; border-radius: 12px; padding: 14px 10px; text-align: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .05); }
-.focus-stat-num { font-size: 1.3rem; font-weight: 800; color: #e91e63; line-height: 1.2; }
+.focus-stat-num { font-size: 1.3rem; font-weight: 800; color: #d5729a; line-height: 1.2; }
 .focus-stat-label { font-size: .76rem; color: #a0808a; margin-top: 3px; }
 
 /* ========== 子任务颗粒度（任务拆解打卡行） ========== */
@@ -1006,10 +1006,10 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .focuslog-total { font-size: .85rem; color: #7d5c69; margin-bottom: 10px; }
 .focuslog-list { display: flex; flex-direction: column; gap: 8px; }
 .focuslog-item { display: flex; gap: 12px; align-items: center; background: #fff; border-radius: 10px; padding: 10px 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, .05); }
-.focuslog-time { font-size: .8rem; font-weight: 700; color: #e91e63; min-width: 78px; line-height: 1.35; }
+.focuslog-time { font-size: .8rem; font-weight: 700; color: #d5729a; min-width: 78px; line-height: 1.35; }
 .focuslog-body { flex: 1; min-width: 0; }
 .focuslog-name { font-size: .92rem; font-weight: 600; word-break: break-all; }
-.focuslog-subj { display: inline-block; font-size: .68rem; padding: 1px 7px; border-radius: 999px; background: #fce4ec; color: #e91e63; margin-right: 6px; vertical-align: 1px; }
+.focuslog-subj { display: inline-block; font-size: .68rem; padding: 1px 7px; border-radius: 999px; background: #fde7ef; color: #d5729a; margin-right: 6px; vertical-align: 1px; }
 .focuslog-dur { font-size: .76rem; color: #a0808a; margin-top: 2px; }
 
 /* ========== 桌面端微调 ========== */
