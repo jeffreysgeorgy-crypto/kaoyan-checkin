@@ -186,10 +186,24 @@ function getPlanForDate(dateStr) {
   return DAILY_PLAN_DATA.find(function (d) { return d.date === dateStr; }) || null;
 }
 
-/* ---------- 数学一轮总进度（高数12章 + 线代20讲 + 概率31讲 = 63 讲） ---------- */
-function getMathProgress(dateStr) {
+/* ---------- 数学一轮总进度（优先读取用户设置，回退到计划推算） ---------- */
+function getMathProgress(dateStr, state) {
   var MATH_HIGH = 12, MATH_LINEAR = 20, MATH_PROB = 31;
   var TOTAL = MATH_HIGH + MATH_LINEAR + MATH_PROB; // 63
+  // 优先使用用户在"统计"页设置的数学章节进度（1~MATH_TOTAL）
+  if (state && state.progress && state.progress.math && state.progress.math.current) {
+    var cur = parseInt(state.progress.math.current, 10) || 1;
+    var mt = (typeof MATH_TOTAL !== 'undefined') ? MATH_TOTAL : 10;
+    var pct = Math.round(cur / mt * 100);
+    var hint = '';
+    if (typeof DAILY_PLAN_DATA !== 'undefined') {
+      var today = getPlanForDate(dateStr);
+      hint = today && today.mathTime && today.mathTime !== '—'
+        ? '今日数学任务：' + today.mathContent + '（' + today.mathTime + '）'
+        : '';
+    }
+    return { pct: pct, label: '数学 第 ' + cur + '/' + mt + ' 章', hint: hint };
+  }
   if (typeof DAILY_PLAN_DATA === 'undefined') return { pct: 0, label: '', hint: '' };
 
   // 圈码 ①-⑳㉑-㉛ → 1-31
@@ -252,10 +266,10 @@ function getMathProgress(dateStr) {
 }
 
 /* ---------- 渲染数学进度条 ---------- */
-function renderMathProgress() {
+function renderMathProgress(state) {
   const el = document.getElementById('mathProgress');
   if (!el) return;
-  const p = getMathProgress(todayStr());
+  const p = getMathProgress(todayStr(), state);
   el.innerHTML =
     '<div class="mp-head"><span class="mp-label">数学一轮 · ' + escapeHtml(p.label) + '</span><span class="mp-pct">' + p.pct + '%</span></div>' +
     '<div class="mp-bar"><div class="mp-fill" style="width:' + p.pct + '%"></div></div>' +
@@ -376,6 +390,7 @@ function renderHeader() {
     formatDateCN(today) + ' ' + WEEKDAY_NAMES[wd] + ' · ' + weekText;
 
   const remain = daysUntil(getExamDate(loadState()));
+  const state = loadState();
   const cd = document.getElementById('countdown');
   if (remain > 0) {
     cd.innerHTML = '距离 2027 年考研初试（28 考研）还有 <span class="days">' + remain + '</span> 天';
@@ -384,7 +399,7 @@ function renderHeader() {
   } else {
     cd.innerHTML = '考研初试已过去 <span class="days">' + (-remain) + '</span> 天';
   }
-  renderMathProgress();
+  renderMathProgress(state);
 }
 
 /* ---------- 渲染：考研进度 ---------- */
@@ -425,7 +440,8 @@ function renderProgress(state) {
 
 /* ---------- 渲染：单词进度 ---------- */
 function renderWordProgress(state) {
-  const target = getWordTarget(state);
+  const ws = getWordSettings(state);
+  const target = ws.target;
   const total = ws.alreadyLearned;
   const remain = Math.max(0, target - total);
   const required = getDailyRequired(state);
@@ -475,7 +491,7 @@ function updateWordHint(state, dateStr) {
   const reviewDone = (day && day.words && day.words.reviewCount) || 0;
   const newLeft = Math.max(0, ws.dailyNew - newDone);
   const reviewLeft = Math.max(0, ws.dailyReview - reviewDone);
-  const total = getTotalLearned(state);
+  const total = ws.alreadyLearned;
   const parts = [];
   parts.push('今日新词 <b>' + newDone + ' / ' + ws.dailyNew + '</b>' + (newLeft ? '（还差 ' + newLeft + '）' : ' ✅'));
   parts.push('今日复习 <b>' + reviewDone + ' / ' + ws.dailyReview + '</b>' + (reviewLeft ? '（还差 ' + reviewLeft + '）' : ' ✅'));
@@ -642,7 +658,7 @@ function renderCategoryCard(b, isPending) {
         ? '<span class="tl-min-label">有效时长 <b>' + (b.actualMinutes || 0) + '</b> 分（子项合计）</span>'
         : '<label class="tl-min-label">有效时长 <input type="number" class="tl-minutes" data-tlmin="' + b.id + '" min="0" max="600" value="' + (b.actualMinutes || '') + '" placeholder="0" inputmode="numeric"> 分</label>') +
       '<button class="tl-focus-btn" data-tlfocus="' + b.id + '"' + (focusing ? ' disabled' : '') + '>' + (focusing ? '⏹ 专注中' : '▶ 开始专注') + '</button>' +
-      '<button class="cat-edit-btn" data-tledit="' + b.id + '" title="编辑任务">✏️</button>' +
+      '<button class="cat-edit-btn" data-tledit="' + b.id + '" title="编辑任务">✏️ 编辑</button>' +
     '</div>' +
     renderSubtaskGroup(b) +
   '</div>';
@@ -1673,7 +1689,7 @@ function renderErrorBook(state) {
     filterHtml +
     '<div class="eb-input-row">' +
       '<input type="text" id="ebInput" placeholder="如：泰勒公式没搞懂（回车加入）" />' +
-      '<label class="eb-photo-btn" title="上传/拍照">📷<input type="file" id="ebPhoto" accept="image/*" capture="environment" hidden></label>' +
+      '<label class="eb-photo-btn" title="上传/拍照">📷 从相册导入<input type="file" id="ebPhoto" accept="image/*" class="eb-file-input"></label>' +
       '<button class="btn btn-primary btn-sm" id="ebAddBtn">加入</button>' +
     '</div>' +
     '<div class="eb-tag-presets">' +
@@ -2158,7 +2174,7 @@ function wordStatsHtml(state) {
   const newLag = newDone < ws.dailyNew;
   const reviewLag = reviewDone < ws.dailyReview;
 
-  const total = getTotalLearned(state);
+  const total = ws.alreadyLearned;
   const remain = Math.max(0, target - total);
   const pct = Math.min(100, Math.round(total / target * 100));
   const examDate = getExamDate(state);
@@ -2855,6 +2871,7 @@ function bindEvents() {
     state.progress.math.current = parseInt(e.target.value, 10);
     saveState(state);
     renderProgress(state);
+    renderMathProgress(state);
   });
   document.getElementById('majorChapter').addEventListener('change', function (e) {
     const state = loadState();
@@ -3102,16 +3119,188 @@ function bindEvents() {
     };
     reader.readAsDataURL(file);
   }
+
+  // 从 dataURL 压缩（用于裁剪后）
+  function compressDataUrl(dataUrl, cb) {
+    const img = new Image();
+    img.onload = function () {
+      const canvas = document.createElement('canvas');
+      const maxW = 800, maxH = 800;
+      let w = img.width, h = img.height;
+      if (w > maxW) { h = h * maxW / w; w = maxW; }
+      if (h > maxH) { w = w * maxH / h; h = maxH; }
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      cb(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.src = dataUrl;
+  }
+
+  /* 裁剪/编辑弹窗：可拖拽裁剪框 + 旋转，确认后压缩返回 */
+  let cropState = null;
+  function openCropModal(srcDataUrl, onConfirm) {
+    const modal = document.getElementById('modal');
+    const mc = document.getElementById('modalContent');
+    mc.innerHTML =
+      '<h3>✂️ 裁剪 / 旋转</h3>' +
+      '<div class="crop-wrap" id="cropWrap">' +
+        '<img id="cropImg" src="' + srcDataUrl + '" crossorigin="anonymous">' +
+        '<div class="crop-box" id="cropBox">' +
+          '<span class="crop-handle" data-c="tl"></span>' +
+          '<span class="crop-handle" data-c="tr"></span>' +
+          '<span class="crop-handle" data-c="bl"></span>' +
+          '<span class="crop-handle" data-c="br"></span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="crop-toolbar">' +
+        '<button class="btn btn-ghost" id="cropRotL">↺ 左旋90°</button>' +
+        '<button class="btn btn-ghost" id="cropRotR">↻ 右旋90°</button>' +
+        '<button class="btn btn-ghost" id="cropReset">重置</button>' +
+      '</div>' +
+      '<p class="hint" style="margin-top:6px;font-size:.78rem;color:#88948c">拖动裁剪框移动，拖动四角调整大小</p>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-primary" id="cropConfirm">确认裁剪</button>' +
+        '<button class="btn btn-ghost" id="cropCancel">取消</button>' +
+      '</div>';
+    openModal();
+
+    const img = document.getElementById('cropImg');
+    const wrap = document.getElementById('cropWrap');
+    const box = document.getElementById('cropBox');
+    let rotation = 0;
+    let crop = { x: 0, y: 0, w: 0, h: 0 }; // 相对图片原始像素的裁剪区域
+
+    function resetCrop() {
+      // 默认裁剪框为图片的 90%，居中
+      const rect = img.getBoundingClientRect();
+      const bw = rect.width * 0.9, bh = rect.height * 0.9;
+      box.style.left = (rect.width - bw) / 2 + 'px';
+      box.style.top = (rect.height - bh) / 2 + 'px';
+      box.style.width = bw + 'px';
+      box.style.height = bh + 'px';
+    }
+    img.onload = function () { resetCrop(); };
+
+    // 旋转
+    function applyRotation() {
+      img.style.transform = 'rotate(' + rotation + 'deg)';
+      setTimeout(resetCrop, 50);
+    }
+    mc.querySelector('#cropRotL').onclick = function () { rotation = (rotation - 90 + 360) % 360; applyRotation(); };
+    mc.querySelector('#cropRotR').onclick = function () { rotation = (rotation + 90) % 360; applyRotation(); };
+    mc.querySelector('#cropReset').onclick = function () { rotation = 0; img.style.transform = ''; resetCrop(); };
+
+    // 拖拽裁剪框
+    let dragMode = null, startX = 0, startY = 0, startBox = null;
+    function onDown(e) {
+      const t = e.target.closest('.crop-handle');
+      const touch = e.touches ? e.touches[0] : e;
+      startX = touch.clientX; startY = touch.clientY;
+      const r = box.getBoundingClientRect();
+      startBox = { left: parseFloat(box.style.left), top: parseFloat(box.style.top), w: r.width, h: r.height };
+      dragMode = t ? t.dataset.c : 'move';
+      e.preventDefault();
+    }
+    function onMove(e) {
+      if (!dragMode) return;
+      const touch = e.touches ? e.touches[0] : e;
+      const dx = touch.clientX - startX, dy = touch.clientY - startY;
+      const wrapR = wrap.getBoundingClientRect();
+      let l = startBox.left, t = startBox.top, w = startBox.w, h = startBox.h;
+      if (dragMode === 'move') { l += dx; t += dy; }
+      else {
+        if (dragMode.indexOf('r') >= 0) w = Math.max(30, startBox.w + dx);
+        if (dragMode.indexOf('l') >= 0) { w = Math.max(30, startBox.w - dx); l = startBox.left + (startBox.w - w); }
+        if (dragMode.indexOf('b') >= 0) h = Math.max(30, startBox.h + dy);
+        if (dragMode.indexOf('t') >= 0) { h = Math.max(30, startBox.h - dy); t = startBox.top + (startBox.h - h); }
+      }
+      // 限制在 wrap 内
+      l = Math.max(0, Math.min(l, wrapR.width - w));
+      t = Math.max(0, Math.min(t, wrapR.height - h));
+      box.style.left = l + 'px'; box.style.top = t + 'px';
+      box.style.width = w + 'px'; box.style.height = h + 'px';
+    }
+    function onUp() { dragMode = null; }
+    box.addEventListener('mousedown', onDown);
+    box.addEventListener('touchstart', onDown, { passive: false });
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchend', onUp);
+
+    mc.querySelector('#cropCancel').onclick = function () {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('touchend', onUp);
+      closeModal();
+    };
+    mc.querySelector('#cropConfirm').onclick = function () {
+      // 将裁剪框坐标映射回图片原始像素（考虑旋转）
+      const imgR = img.getBoundingClientRect();
+      const boxR = box.getBoundingClientRect();
+      const scaleX = img.naturalWidth / imgR.width;
+      const scaleY = img.naturalHeight / imgR.height;
+      // 裁剪框相对图片显示区域的偏移
+      let cx = (boxR.left - imgR.left) * scaleX;
+      let cy = (boxR.top - imgR.top) * scaleY;
+      let cw = boxR.width * scaleX;
+      let ch = boxR.height * scaleY;
+
+      // 用 canvas 先旋转整张图，再裁剪
+      const srcCanvas = document.createElement('canvas');
+      const sw = img.naturalWidth, sh = img.naturalHeight;
+      const rot = rotation % 360;
+      let dw = sw, dh = sh;
+      if (rot === 90 || rot === 270) { dw = sh; dh = sw; }
+      srcCanvas.width = dw; srcCanvas.height = dh;
+      const sctx = srcCanvas.getContext('2d');
+      sctx.save();
+      sctx.translate(dw / 2, dh / 2);
+      sctx.rotate(rot * Math.PI / 180);
+      sctx.drawImage(img, -sw / 2, -sh / 2);
+      sctx.restore();
+
+      // 裁剪坐标映射到旋转后的画布
+      let rx = cx, ry = cy, rw = cw, rh = ch;
+      if (rot === 90) { rx = sh - cy - ch; ry = cx; rw = ch; rh = cw; }
+      else if (rot === 180) { rx = sw - cx - cw; ry = sh - cy - ch; }
+      else if (rot === 270) { rx = cy; ry = sw - cx - cw; rw = ch; rh = cw; }
+      rx = Math.max(0, rx); ry = Math.max(0, ry);
+      rw = Math.min(rw, dw - rx); rh = Math.min(rh, dh - ry);
+
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = Math.max(1, rw); outCanvas.height = Math.max(1, rh);
+      outCanvas.getContext('2d').drawImage(srcCanvas, rx, ry, rw, rh, 0, 0, rw, rh);
+
+      // 压缩到 800px，质量 0.7
+      compressDataUrl(outCanvas.toDataURL('image/jpeg', 0.7), function (finalUrl) {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchend', onUp);
+        closeModal();
+        onConfirm(finalUrl);
+      });
+    };
+  }
   ebEl.addEventListener('change', function (e) {
     if (e.target.id === 'ebPhoto') {
       const file = e.target.files[0];
       if (!file) return;
-      compressPhoto(file, function (dataUrl) {
-        pendingPhoto = dataUrl;
-        const prev = document.getElementById('ebPreview');
-        prev.hidden = false;
-        prev.innerHTML = '<img src="' + dataUrl + '" alt="预览"><button class="eb-photo-clear" id="ebPhotoClear">✕</button>';
-      });
+      const reader = new FileReader();
+      reader.onload = function (ev) {
+        openCropModal(ev.target.result, function (croppedDataUrl) {
+          pendingPhoto = croppedDataUrl;
+          const prev = document.getElementById('ebPreview');
+          if (prev) {
+            prev.hidden = false;
+            prev.innerHTML = '<img src="' + croppedDataUrl + '" alt="预览"><button class="eb-photo-clear" id="ebPhotoClear">✕</button>';
+          }
+        });
+      };
+      reader.readAsDataURL(file);
       e.target.value = '';
     }
   });
