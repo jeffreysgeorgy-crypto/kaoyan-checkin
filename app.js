@@ -640,8 +640,9 @@ function collectTaskBlocks(state, dateStr) {
 
 function renderCategoryCard(b, isPending) {
   const focusing = pomo.running && pomo.mode === 'focus' && pomo.taskId === b.id;
+  const justEnded = !focusing && justEndedTaskId === b.id;
   const timeText = isPending ? '📌 待办池' : (b.start ? (b.start + ' - ' + b.end) : '自由时间');
-  return '<div class="cat-task' + (b.done ? ' done' : '') + (focusing ? ' focusing' : '') + (isPending ? ' pending' : '') + '">' +
+  return '<div class="cat-task' + (b.done ? ' done' : '') + (focusing ? ' focusing' : '') + (justEnded ? ' just-ended' : '') + (isPending ? ' pending' : '') + '">' +
     '<div class="cat-task-head">' +
       '<input type="checkbox" class="cat-check" data-tldone="' + b.id + '"' + (b.done ? ' checked' : '') + ' aria-label="打卡">' +
       '<div class="cat-task-main">' +
@@ -2508,6 +2509,8 @@ const pomo = {
   // 历史最长/今日最长记录
   sessionMinutes: 0,
 };
+// 刚结束专注的任务 ID（用于在分类任务清单里高亮显示，方便用户打卡）
+var justEndedTaskId = null;
 
 function pomoTotal() {
   const m = pomo.mode === 'focus' ? pomoPref.focusMin : pomoPref.breakMin;
@@ -2694,6 +2697,111 @@ function onPomoComplete() {
   const fs = loadState();
   renderFocusOverview(fs);
   renderFocusLog(fs);
+}
+
+/* 手动结束专注：按实际已专注时长入库，并自动跳转到对应任务卡片 */
+function endFocusSession() {
+  // 休息模式直接结束：不记录专注时长，仅复位
+  if (pomo.mode !== 'focus') {
+    pauseCountdown();
+    pomo.mode = 'focus';
+    pomo.remaining = pomoPref.focusMin * 60;
+    const endedId = pomo.taskId;
+    clearPomoTaskBinding();
+    renderPomo();
+    jumpToTaskIfNeeded(endedId);
+    return;
+  }
+  // 计算实际已专注分钟数
+  let elapsedMin = 0;
+  if (pomo.sessionStartTs) {
+    elapsedMin = Math.max(0, Math.round((Date.now() - pomo.sessionStartTs) / 60000));
+  } else if (pomo.remaining < pomoTotal()) {
+    // 兜底：按倒计时消耗量推算
+    elapsedMin = Math.max(0, Math.round((pomoTotal() - pomo.remaining) / 60));
+  }
+  pauseCountdown();
+  const endedTaskId = pomo.taskId;
+  const endedTaskName = pomo.taskName || '';
+  // 未开始或专注时长不足 1 分钟：仅复位，不入库
+  if (elapsedMin < 1) {
+    pomo.mode = 'focus';
+    pomo.remaining = pomoPref.focusMin * 60;
+    pomo.sessionStartTs = null;
+    clearPomoTaskBinding();
+    renderPomo();
+    jumpToTaskIfNeeded(endedTaskId);
+    return;
+  }
+  // 入库：写专注日志 + 同步回写任务时长
+  const state = loadState();
+  const day = ensureDay(state, todayStr());
+  // 满 5 分钟才计为 1 个番茄钟，避免反复点击虚增
+  if (elapsedMin >= 5) day.pomodoros = (day.pomodoros || 0) + 1;
+  day.studyMinutes = (day.studyMinutes || 0) + elapsedMin;
+  let logSubject = '';
+  if (endedTaskId) {
+    const b = findTimelineBlock(state, todayStr(), endedTaskId);
+    if (b) {
+      b.actualMinutes = (b.actualMinutes || 0) + elapsedMin;
+      logSubject = b.subject || '';
+    }
+  }
+  day.focusLog = day.focusLog || [];
+  const startTs = pomo.sessionStartTs || (Date.now() - elapsedMin * 60000);
+  day.focusLog.push({
+    id: 'fs-' + Date.now(),
+    name: endedTaskName || '自由专注',
+    subject: logSubject,
+    start: fmtClock(startTs),
+    end: fmtClock(Date.now()),
+    minutes: elapsedMin,
+    ts: Date.now()
+  });
+  pomo.sessionStartTs = null;
+  saveState(state);
+  // 复位番茄钟
+  pomo.mode = 'focus';
+  pomo.remaining = pomoPref.focusMin * 60;
+  clearPomoTaskBinding();
+  renderPomo();
+  renderHistory(state);
+  const fs2 = loadState();
+  renderFocusOverview(fs2);
+  renderFocusLog(fs2);
+  // 提示本次专注时长
+  setTimeout(function () {
+    document.getElementById('modalContent').innerHTML =
+      '<h3>⏹ 已结束专注</h3>' +
+      '<p>本次专注 <b>' + elapsedMin + '</b> 分钟' + (endedTaskName ? ' · ' + escapeHtml(endedTaskName) : '') + '。</p>' +
+      '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">好的</button></div>';
+    openModal();
+  }, 80);
+  // 跳转到对应任务卡片
+  jumpToTaskIfNeeded(endedTaskId);
+}
+
+/* 跳转到对应任务卡片：定位到分类任务清单，并切到匹配的学科筛选 */
+function jumpToTaskIfNeeded(taskId) {
+  if (!taskId) return;
+  justEndedTaskId = taskId;
+  const state = loadState();
+  const b = findTimelineBlock(state, todayStr(), taskId);
+  if (b && b.subject) {
+    // 选择能匹配该学科的 tab
+    const matched = SUBJECT_TABS.find(function (t) {
+      return t.key !== 'all' && matchSubjectFilter(b, t.key);
+    });
+    if (matched) currentSubjectFilter = matched.key;
+  }
+  tasksViewDate = todayStr();
+  switchTab('tasks');
+  // 渲染完成后短暂保留高亮，几秒后自动清除
+  setTimeout(function () {
+    justEndedTaskId = null;
+    const state2 = loadState();
+    renderTasksPage(state2, todayStr());
+  }, 6000);
 }
 
 /* 清除任务绑定并同步清空"本次专注事项"输入框 */
@@ -3843,6 +3951,12 @@ function bindEvents() {
     pomo.remaining = pomoPref.focusMin * 60;
     clearPomoTaskBinding();
     renderPomo();
+  });
+
+  // 番茄钟：手动结束本次专注，按实际已专注时长入库并跳转回对应任务
+  document.getElementById('pomoEnd').addEventListener('click', function () {
+    ensureAudio();
+    endFocusSession();
   });
 
   // 单词设置保存（我的页：每日新词 / 每日复习 / 大纲总词量）

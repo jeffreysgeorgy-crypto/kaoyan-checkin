@@ -230,6 +230,8 @@ select {
 .btn-ghost.active { background: #3f8f62; color: #fff; border-color: #3f8f62; }
 .btn-sm { padding: 6px 14px; font-size: .82rem; border-radius: 10px; }
 .btn.danger { color: #c0392b; border-color: #e3b3ad; }
+.btn-end { background: #d9534f; color: #fff; }
+.btn-end:active { background: #c9302c; }
 
 /* ========== 反思 ========== */
 .field { margin-bottom: 14px; }
@@ -769,6 +771,11 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .cat-task.done .cat-task-name { text-decoration: line-through; }
 .cat-task.pending { border-color: #e57373; background: #fff5f5; }
 .cat-task.focusing { border-color: #3f8f62; box-shadow: 0 0 10px rgba(63, 143, 98, .3); }
+.cat-task.just-ended { border-color: #d9534f; box-shadow: 0 0 12px rgba(217, 83, 79, .35); animation: justEndedPulse 1.4s ease-in-out 2; }
+@keyframes justEndedPulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(217, 83, 79, .35); }
+  50% { box-shadow: 0 0 18px rgba(217, 83, 79, .6); }
+}
 .cat-task-head { display: flex; align-items: flex-start; gap: 10px; }
 .cat-check { margin-top: 5px; width: 17px; height: 17px; accent-color: #3f8f62; flex-shrink: 0; }
 .cat-task-main { flex: 1; min-width: 0; }

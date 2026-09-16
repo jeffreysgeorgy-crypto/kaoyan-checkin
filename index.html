@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="考研打卡">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=20260916f">
+<link rel="stylesheet" href="style.css?v=20260916g">
 </head>
 <body>
 
@@ -83,6 +83,7 @@
         <div class="pomo-controls">
           <button class="btn btn-primary" id="pomoStart">开始</button>
           <button class="btn btn-ghost" id="pomoReset">重置</button>
+          <button class="btn btn-end" id="pomoEnd" type="button">结束</button>
         </div>
         <div class="pomo-count" id="pomoCount">今日专注：0 个番茄钟</div>
       </div>
@@ -353,8 +354,8 @@
 <!-- 战报渲染目标（离屏，供 html2canvas 截图） -->
 <div id="reportRoot" class="report-root"></div>
 
-<script src="data.js?v=20260916f"></script>
-<script src="app.js?v=20260916f"></script>
+<script src="data.js?v=20260916g"></script>
+<script src="app.js?v=20260916g"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(function (err) {
