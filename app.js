@@ -1680,6 +1680,7 @@ function renderErrorBook(state) {
         (severe ? '<span class="eb-flag">⚠️ 重点攻克</span>' : '') +
       '</div>' +
       '<button class="eb-toggle" data-ebtoggle="' + realIdx + '" title="标记已掌握">' + (e.mastered ? '↩' : '✓') + '</button>' +
+      '<button class="eb-edittag" data-ebedittag="' + realIdx + '" title="编辑标签">✏️ 标签</button>' +
       '<button class="eb-del" data-ebdel="' + realIdx + '" title="删除">✕</button>' +
     '</div>';
   }).join('') : '<p class="empty">' + (activeTagFilter.length ? '没有同时选中这些标签的错题' : '错题本为空，输入一个没搞懂的知识点或拍照加入吧～') + '</p>';
@@ -1695,8 +1696,9 @@ function renderErrorBook(state) {
     '<div class="eb-tag-presets">' +
       '<span class="eb-tag-presets-label">标签：</span>' +
       EB_PRESET_TAGS.map(function (t) {
-        return '<button class="eb-tag-preset" data-ebtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
+        return '<button class="eb-tag-preset' + (pendingTags.indexOf(t) >= 0 ? ' active' : '') + '" data-ebtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
       }).join('') +
+      (pendingTags.length ? '<span class="eb-pending-tags-hint">已选 ' + pendingTags.length + ' 个：' + pendingTags.map(function (t) { return '<b>' + escapeHtml(t) + '</b>'; }).join('、') + '</span>' : '') +
     '</div>' +
     '<div class="eb-preview" id="ebPreview" hidden></div>' +
     (queueCount ?
@@ -1721,6 +1723,101 @@ function renderErrorBook(state) {
   });
 }
 
+/* ---------- 错题标签编辑弹窗 ---------- */
+let editingTagIdx = -1;
+let editingTagList = []; // 弹窗内的临时标签列表
+
+function openEditTagsModal(idx) {
+  const state = loadState();
+  const eb = getErrorBook(state);
+  const item = eb[idx];
+  if (!item) return;
+  editingTagIdx = idx;
+  editingTagList = (item.tags || []).slice();
+  renderEditTagsModal();
+  openModal();
+}
+
+function renderEditTagsModal() {
+  const mc = document.getElementById('modalContent');
+  const current = editingTagList.slice();
+  const currentHtml = current.length
+    ? current.map(function (t) {
+        return '<span class="eb-tag eb-tag-removable" data-rmtag="' + escapeHtml(t) + '">' + escapeHtml(t) + ' ✕</span>';
+      }).join('')
+    : '<span class="hint" style="color:#999">暂无标签，从下方选择或输入</span>';
+
+  const presetHtml = EB_PRESET_TAGS.map(function (t) {
+    const active = current.indexOf(t) >= 0;
+    return '<button class="eb-tag-preset' + (active ? ' active' : '') + '" data-addtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
+  }).join('');
+
+  mc.innerHTML =
+    '<h3>✏️ 编辑标签</h3>' +
+    '<div class="eb-edit-tags-current">' +
+      '<div class="eb-edit-tags-label">当前标签：</div>' +
+      '<div class="eb-tags">' + currentHtml + '</div>' +
+    '</div>' +
+    '<div class="eb-edit-tags-presets">' +
+      '<div class="eb-edit-tags-label">从预设选择：</div>' +
+      '<div class="eb-tag-presets">' + presetHtml + '</div>' +
+    '</div>' +
+    '<div class="eb-edit-tags-custom">' +
+      '<div class="eb-edit-tags-label">自定义标签：</div>' +
+      '<div style="display:flex;gap:8px">' +
+        '<input type="text" id="ebCustomTagInput" placeholder="输入标签名，如：线性代数" maxlength="12">' +
+        '<button class="btn btn-ghost btn-sm" id="ebAddCustomTag">添加</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-actions">' +
+      '<button class="btn btn-primary" id="ebSaveTags">保存</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+    '</div>';
+
+  // 移除已有标签
+  mc.querySelectorAll('[data-rmtag]').forEach(function (el) {
+    el.addEventListener('click', function () {
+      const t = el.dataset.rmtag;
+      editingTagList = editingTagList.filter(function (x) { return x !== t; });
+      renderEditTagsModal();
+    });
+  });
+  // 预设标签切换
+  mc.querySelectorAll('[data-addtag]').forEach(function (el) {
+    el.addEventListener('click', function () {
+      const t = el.dataset.addtag;
+      const i = editingTagList.indexOf(t);
+      if (i >= 0) editingTagList.splice(i, 1);
+      else editingTagList.push(t);
+      renderEditTagsModal();
+    });
+  });
+  // 自定义标签
+  const customInput = document.getElementById('ebCustomTagInput');
+  const addCustom = function () {
+    const v = (customInput.value || '').trim();
+    if (!v) return;
+    if (editingTagList.indexOf(v) < 0) editingTagList.push(v);
+    customInput.value = '';
+    renderEditTagsModal();
+  };
+  document.getElementById('ebAddCustomTag').addEventListener('click', addCustom);
+  customInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') addCustom(); });
+
+  // 保存
+  document.getElementById('ebSaveTags').addEventListener('click', function () {
+    const state = loadState();
+    const eb = getErrorBook(state);
+    if (eb[editingTagIdx]) {
+      eb[editingTagIdx].tags = editingTagList.slice();
+      saveState(state);
+      renderErrorBook(state);
+      renderTimeline(state, todayStr());
+    }
+    closeModal();
+  });
+}
+
 /* 每日时间轴：插入"错题本复习"任务块（每天最多 1 条） */
 function getDailyErrorReview(state, dateStr) {
   const queue = getTodayReviewQueue(state, dateStr);
@@ -1739,6 +1836,7 @@ function getDailyErrorReview(state, dateStr) {
 /* ---------- 错题本复习模式（全屏卡片） ---------- */
 const EB_PRESET_TAGS = ['数学', '计组', '数据结构', '英语', '高频错题', '易混概念'];
 let activeTagFilter = []; // 当前选中的筛选标签（多选）
+var pendingTags = []; // 暂存待加入错题的标签（全局，供 renderErrorBook 读取已选状态）
 let ebReviewIdx = 0;
 let ebReviewQueue = [];
 function openEbReviewMode(state) {
@@ -3099,7 +3197,6 @@ function bindEvents() {
   // 功能 F：错题本 2.0（加入/照片上传/标记掌握/删除/复习模式/图片预览）
   const ebEl = document.getElementById('errorBook');
   let pendingPhoto = ''; // 暂存待加入的照片 base64
-  let pendingTags = []; // 暂存待加入错题的标签
   function compressPhoto(file, cb) {
     const reader = new FileReader();
     reader.onload = function () {
@@ -3312,6 +3409,23 @@ function bindEvents() {
       const idx = pendingTags.indexOf(tag);
       if (idx >= 0) { pendingTags.splice(idx, 1); presetBtn.classList.remove('active'); }
       else { pendingTags.push(tag); presetBtn.classList.add('active'); }
+      // 更新已选提示
+      const hint = ebEl.querySelector('.eb-pending-tags-hint');
+      if (pendingTags.length) {
+        const txt = '已选 ' + pendingTags.length + ' 个：' + pendingTags.map(function (t) { return '<b>' + escapeHtml(t) + '</b>'; }).join('、');
+        if (hint) hint.innerHTML = txt;
+        else {
+          const presets = ebEl.querySelector('.eb-tag-presets');
+          if (presets) {
+            const span = document.createElement('span');
+            span.className = 'eb-pending-tags-hint';
+            span.innerHTML = txt;
+            presets.appendChild(span);
+          }
+        }
+      } else if (hint) {
+        hint.remove();
+      }
       return;
     }
     // 标签筛选芯片：多选切换
@@ -3411,6 +3525,13 @@ function bindEvents() {
       saveState(state);
       renderErrorBook(state);
       renderTimeline(state, todayStr());
+      return;
+    }
+    // 编辑标签
+    const editTagBtn = e.target.closest('[data-ebedittag]');
+    if (editTagBtn) {
+      const idx = parseInt(editTagBtn.dataset.ebedittag, 10);
+      openEditTagsModal(idx);
       return;
     }
   });

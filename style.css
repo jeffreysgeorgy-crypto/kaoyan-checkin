@@ -1245,3 +1245,26 @@ table.schedule .sc-loc { font-size: .64rem; }
   flex-shrink: 0; font-weight: 600;
 }
 .cat-edit-btn:hover { background: #e4f1e8; }
+
+/* ========== 错题本：标签编辑 + 录入优化 ========== */
+.eb-edittag {
+  background: #f0f7f2; border: 1px solid #cfe5d4; color: #2f6f4b;
+  cursor: pointer; font-size: .76rem; padding: 3px 8px; border-radius: 6px;
+  flex-shrink: 0; font-weight: 600;
+}
+.eb-edittag:hover { background: #e4f1e8; }
+.eb-tag-removable { cursor: pointer; user-select: none; }
+.eb-tag-removable:hover { background: #ffe5e5; color: #c62828; border-color: #f5c6c6; }
+.eb-edit-tags-label { font-size: .84rem; color: #4a574f; font-weight: 600; margin: 10px 0 6px; }
+.eb-edit-tags-current .eb-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; }
+.eb-edit-tags-presets .eb-tag-presets { margin: 0; }
+.eb-edit-tags-custom input {
+  flex: 1; padding: 6px 10px; border: 1px solid #d0ddd3; border-radius: 8px;
+  font-size: .9rem; outline: none;
+}
+.eb-edit-tags-custom input:focus { border-color: #3f8f62; }
+/* 录入区已选标签提示 */
+.eb-pending-tags-hint {
+  font-size: .78rem; color: #2f6f4b; margin-left: 8px; align-self: center;
+}
+.eb-pending-tags-hint b { color: #1a4d33; }
