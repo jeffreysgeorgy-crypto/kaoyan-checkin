@@ -3046,12 +3046,25 @@ function ensureAudio() {
 function beep() {
   try {
     if (!audioCtx) return;
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.type = 'sine'; o.frequency.value = 880;
-    g.gain.value = 0.15;
-    o.start(); o.stop(audioCtx.currentTime + 0.4);
+    // 滴滴两声：第一声 880Hz，第二声 1100Hz，间隔 0.28 秒
+    const t0 = audioCtx.currentTime;
+    const o1 = audioCtx.createOscillator();
+    const g1 = audioCtx.createGain();
+    o1.connect(g1); g1.connect(audioCtx.destination);
+    o1.type = 'sine'; o1.frequency.value = 880;
+    g1.gain.setValueAtTime(0.0001, t0);
+    g1.gain.exponentialRampToValueAtTime(0.22, t0 + 0.01);
+    g1.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+    o1.start(t0); o1.stop(t0 + 0.2);
+    const t1 = t0 + 0.28;
+    const o2 = audioCtx.createOscillator();
+    const g2 = audioCtx.createGain();
+    o2.connect(g2); g2.connect(audioCtx.destination);
+    o2.type = 'sine'; o2.frequency.value = 1100;
+    g2.gain.setValueAtTime(0.0001, t1);
+    g2.gain.exponentialRampToValueAtTime(0.22, t1 + 0.01);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t1 + 0.18);
+    o2.start(t1); o2.stop(t1 + 0.2);
   } catch (e) {}
 }
 
@@ -3426,6 +3439,56 @@ function bindEvents() {
       found.block.actualMinutes = v;
     }
     saveState(state);
+  });
+  // 聚焦时记录当前 actualMinutes 作为同步基准（用于 change 事件计算增量）
+  document.addEventListener('focusin', function (e) {
+    const input = e.target.closest('input[data-tlmin]');
+    if (!input) return;
+    const date = eventViewDate(e);
+    const state = loadState();
+    const found = findTaskRef(state, date, input.dataset.tlmin);
+    const cur = found.sub ? (found.sub.actualMinutes || 0) : (found.block ? (found.block.actualMinutes || 0) : 0);
+    input.dataset.tlSynced = String(cur);
+  });
+  // 失焦/Enter 时把手动填写的时长增量同步到专注记录 + 今日学习时长（仅今天）
+  document.addEventListener('change', function (e) {
+    const input = e.target.closest('input[data-tlmin]');
+    if (!input) return;
+    const date = eventViewDate(e);
+    if (date !== todayStr()) { return; }
+    const oldVal = parseInt(input.dataset.tlSynced || '0', 10) || 0;
+    const newVal = Math.max(0, parseInt(input.value, 10) || 0);
+    input.dataset.tlSynced = String(newVal);
+    const delta = newVal - oldVal;
+    if (delta === 0) return;
+    const state = loadState();
+    const day = ensureDay(state, date);
+    const found = findTaskRef(state, date, input.dataset.tlmin);
+    const taskName = found.block ? (found.block.name || '任务') : '任务';
+    const subject = found.block ? (found.block.subject || '') : '';
+    if (delta > 0) {
+      // 增加：写一条"手动补录"的专注记录
+      day.studyMinutes = (day.studyMinutes || 0) + delta;
+      day.focusLog = day.focusLog || [];
+      day.focusLog.push({
+        id: 'fs-manual-' + Date.now(),
+        name: taskName + '（手动补录）',
+        subject: subject,
+        start: fmtClock(Date.now()),
+        end: fmtClock(Date.now()),
+        minutes: delta,
+        ts: Date.now(),
+        manual: true
+      });
+    } else {
+      // 减少：只扣今日学习时长，不删专注记录（保留历史）
+      day.studyMinutes = Math.max(0, (day.studyMinutes || 0) + delta);
+    }
+    saveState(state);
+    // 刷新专注页统计与记录（元素在隐藏 panel 中也会更新，切回时即最新）
+    if (typeof renderFocusOverview === 'function') renderFocusOverview(state);
+    if (typeof renderFocusLog === 'function') renderFocusLog(state);
+    if (typeof renderPomo === 'function') renderPomo();
   });
   document.addEventListener('click', function (e) {
     // 星级评分
