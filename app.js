@@ -314,7 +314,8 @@ function getReviewDue(state, dateStr) {
   return total;
 }
 function getDailyRequired(state) {
-  const remain = getWordTarget(state) - getTotalLearned(state);
+  const ws = getWordSettings(state);
+  const remain = ws.target - ws.alreadyLearned;
   if (remain <= 0) return 0;
   const days = Math.max(1, daysUntil(getExamDate(state)));
   return Math.ceil(remain / days);
@@ -425,7 +426,7 @@ function renderProgress(state) {
 /* ---------- 渲染：单词进度 ---------- */
 function renderWordProgress(state) {
   const target = getWordTarget(state);
-  const total = getTotalLearned(state);
+  const total = ws.alreadyLearned;
   const remain = Math.max(0, target - total);
   const required = getDailyRequired(state);
   const pct = Math.min(100, Math.round(total / target * 100));
@@ -567,7 +568,7 @@ function renderWordMini(state, dateStr) {
   const el = document.getElementById('wordMini');
   if (!el) return;
   const ws = getWordSettings(state);
-  const total = getTotalLearned(state);
+  const total = ws.alreadyLearned;
   const day = state.days && state.days[dateStr];
   const newDone = (day && day.words && day.words.newCount) || 0;
   const reviewDone = (day && day.words && day.words.reviewCount) || 0;
@@ -641,6 +642,7 @@ function renderCategoryCard(b, isPending) {
         ? '<span class="tl-min-label">有效时长 <b>' + (b.actualMinutes || 0) + '</b> 分（子项合计）</span>'
         : '<label class="tl-min-label">有效时长 <input type="number" class="tl-minutes" data-tlmin="' + b.id + '" min="0" max="600" value="' + (b.actualMinutes || '') + '" placeholder="0" inputmode="numeric"> 分</label>') +
       '<button class="tl-focus-btn" data-tlfocus="' + b.id + '"' + (focusing ? ' disabled' : '') + '>' + (focusing ? '⏹ 专注中' : '▶ 开始专注') + '</button>' +
+      '<button class="cat-edit-btn" data-tledit="' + b.id + '" title="编辑任务">✏️</button>' +
     '</div>' +
     renderSubtaskGroup(b) +
   '</div>';
@@ -731,6 +733,16 @@ function renderTasksPage(state, dateStr) {
   tabsEl.innerHTML = SUBJECT_TABS.map(function (t) {
     return '<button class="subject-tab' + (currentSubjectFilter === t.key ? ' active' : '') + '" data-subj="' + t.key + '">' + t.label + '</button>';
   }).join('');
+  // 日期导航栏（显示当前查看日期 + 前一天/后一天 + 回到今天）
+  const isToday = dateStr === todayStr();
+  let navHtml = '<div class="task-date-nav">' +
+    '<button class="btn btn-ghost btn-sm" id="taskPrevDay">‹ 前一天</button>' +
+    '<span class="task-date-label">' + formatDateCN(dateStr) + ' ' + WEEKDAY_NAMES[getWeekday(dateStr)] + '</span>' +
+    '<button class="btn btn-ghost btn-sm" id="taskNextDay">后一天 ›</button>' +
+    (isToday ? '' : '<button class="btn btn-ghost btn-sm" id="taskBackToday">回到今天</button>') +
+    '<button class="btn btn-primary btn-sm" id="taskAddBtn">+ 添加任务</button>' +
+  '</div>';
+  listEl.innerHTML = navHtml;
   // 收集任务并按当前学科过滤
   const rows = collectTaskBlocks(state, dateStr);
   const filtered = rows.filter(function (r) { return matchSubjectFilter(r.block, currentSubjectFilter); });
@@ -777,7 +789,7 @@ function renderTasksPage(state, dateStr) {
     }
   }
 
-  listEl.innerHTML = html;
+  listEl.innerHTML += html;
   // 输入框值同步（renderWordBlock/renderProblemBlock 已有空值保护）
   renderWordBlock(state, dateStr);
   renderProblemBlock(state, dateStr);
@@ -916,6 +928,7 @@ function renderHistory(state) {
 
 /* ---------- 时间轴（日程表） ---------- */
 let editingBlock = { id: null };
+let editingDate = todayStr();
 
 function nowTime() {
   const d = new Date();
@@ -1359,6 +1372,8 @@ function renderStars(blockId, rating) {
 
 /* 时间轴当前查看日期（可前一天/后一天/跳转；进入"今日"页时重置为今天） */
 let timelineViewDate = todayStr();
+/* 任务清单当前查看日期（可前一天/后一天切换；进入"任务"页时重置为今天） */
+let tasksViewDate = todayStr();
 function renderTimelineNav() {
   const pick = document.getElementById('tlDatePick');
   const back = document.getElementById('tlBackToday');
@@ -1373,7 +1388,11 @@ function setTimelineViewDate(dateStr) {
 }
 /* 打卡/评分/时长事件：来自 #timeline 操作"当前查看日期"，其余容器（任务清单页）操作今天 */
 function eventViewDate(e) {
-  return (e.target && e.target.closest && e.target.closest('#timeline')) ? timelineViewDate : todayStr();
+  if (e.target && e.target.closest) {
+    if (e.target.closest('#timeline')) return timelineViewDate;
+    if (e.target.closest('#tasksList')) return tasksViewDate;
+  }
+  return todayStr();
 }
 
 function renderTimeline(state, dateStr) {
@@ -1523,6 +1542,61 @@ function renderProcrastinationStats(state) {
 }
 
 /* ---------- 功能 F：错题本 2.0（照片 + 复习模式 + 每日队列） ---------- */
+/* ---------- 错题照片存储：IndexedDB（失败降级 localStorage） ---------- */
+const EB_PHOTO_DB = 'kaoyan_eb_photos';
+const EB_PHOTO_STORE = 'photos';
+let ebPhotoDB = null;
+function openEbPhotoDB() {
+  return new Promise(function (resolve, reject) {
+    if (!window.indexedDB) { reject(new Error('no idb')); return; }
+    const req = indexedDB.open(EB_PHOTO_DB, 1);
+    req.onupgradeneeded = function () {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(EB_PHOTO_STORE)) {
+        db.createObjectStore(EB_PHOTO_STORE);
+      }
+    };
+    req.onsuccess = function () { ebPhotoDB = req.result; resolve(ebPhotoDB); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+function savePhotoToDB(id, dataUrl) {
+  return openEbPhotoDB().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(EB_PHOTO_STORE, 'readwrite');
+      tx.objectStore(EB_PHOTO_STORE).put(dataUrl, id);
+      tx.oncomplete = function () { resolve(true); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }).catch(function () {
+    // 降级：存 localStorage（容量小，仅作兜底）
+    try {
+      localStorage.setItem(EB_PHOTO_DB + '_' + id, dataUrl);
+      return Promise.resolve(true);
+    } catch (e) { return Promise.reject(e); }
+  });
+}
+function getPhotoFromDB(id) {
+  return openEbPhotoDB().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(EB_PHOTO_STORE, 'readonly');
+      const req = tx.objectStore(EB_PHOTO_STORE).get(id);
+      req.onsuccess = function () { resolve(req.result || ''); };
+      req.onerror = function () { resolve(''); };
+    });
+  }).catch(function () {
+    // 降级
+    return Promise.resolve(localStorage.getItem(EB_PHOTO_DB + '_' + id) || '');
+  });
+}
+function deletePhotoFromDB(id) {
+  openEbPhotoDB().then(function (db) {
+    const tx = db.transaction(EB_PHOTO_STORE, 'readwrite');
+    tx.objectStore(EB_PHOTO_STORE).delete(id);
+  }).catch(function () {});
+  localStorage.removeItem(EB_PHOTO_DB + '_' + id);
+}
+
 function getErrorBook(state) {
   state.errorBook = state.errorBook || [];
   // 旧数据迁移：补字段
@@ -1531,6 +1605,8 @@ function getErrorBook(state) {
     if (e.reviewCount === undefined) e.reviewCount = 0;
     if (e.lastReviewDate === undefined) e.lastReviewDate = '';
     if (e.photo === undefined) e.photo = '';
+    if (e.photoId === undefined) e.photoId = '';
+    if (e.tags === undefined) e.tags = [];
     delete e.done; // 旧字段清理（保留 mastered）
   });
   return state.errorBook;
@@ -1555,27 +1631,56 @@ function renderErrorBook(state) {
   const queue = getTodayReviewQueue(state, todayStr());
   const queueCount = queue.length;
 
-  const list = eb.length ? eb.map(function (e, i) {
+  // 收集所有已使用的标签
+  const allTags = {};
+  eb.forEach(function (e) { (e.tags || []).forEach(function (t) { allTags[t] = true; }); });
+  const usedTags = Object.keys(allTags);
+
+  // 标签筛选栏（多选）
+  const filterHtml = '<div class="eb-tag-filter">' +
+    '<button class="eb-tag-chip' + (activeTagFilter.length === 0 ? ' active' : '') + '" data-ebtag-filter="__all__">全部</button>' +
+    usedTags.map(function (t) {
+      return '<button class="eb-tag-chip' + (activeTagFilter.indexOf(t) >= 0 ? ' active' : '') + '" data-ebtag-filter="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
+    }).join('') +
+  '</div>';
+
+  // 按选中标签过滤（需同时包含所有选中标签）
+  const filtered = activeTagFilter.length === 0 ? eb : eb.filter(function (e) {
+    return activeTagFilter.every(function (t) { return (e.tags || []).indexOf(t) >= 0; });
+  });
+
+  const list = filtered.length ? filtered.map(function (e, i) {
+    // i 是 filtered 中的索引，需要在原始 eb 中找真实索引用于操作
+    const realIdx = eb.indexOf(e);
     const severe = (e.reviewCount || 0) >= 3 && !e.mastered;
+    const hasPhoto = e.photoId || e.photo;
     return '<div class="eb-item' + (e.mastered ? ' done' : '') + (severe ? ' severe' : '') + '">' +
-      (e.photo ? '<img class="eb-thumb" src="' + e.photo + '" alt="错题照片" data-ebphoto="' + i + '">' : '') +
+      (hasPhoto ? '<img class="eb-thumb" data-ebphoto="' + realIdx + '" data-photoid="' + escapeHtml(e.photoId || e.id) + '" alt="错题照片">' : '') +
       '<span class="eb-date">' + (e.date || '').slice(5) + '</span>' +
       '<div class="eb-body">' +
         '<span class="eb-text">' + escapeHtml(e.text || '') + '</span>' +
+        (e.tags && e.tags.length ? '<div class="eb-tags">' + e.tags.map(function (t) { return '<span class="eb-tag">' + escapeHtml(t) + '</span>'; }).join('') + '</div>' : '') +
         (e.reviewCount ? '<span class="eb-rc">复习 ' + e.reviewCount + ' 次</span>' : '') +
         (severe ? '<span class="eb-flag">⚠️ 重点攻克</span>' : '') +
       '</div>' +
-      '<button class="eb-toggle" data-ebtoggle="' + i + '" title="标记已掌握">' + (e.mastered ? '↩' : '✓') + '</button>' +
-      '<button class="eb-del" data-ebdel="' + i + '" title="删除">✕</button>' +
+      '<button class="eb-toggle" data-ebtoggle="' + realIdx + '" title="标记已掌握">' + (e.mastered ? '↩' : '✓') + '</button>' +
+      '<button class="eb-del" data-ebdel="' + realIdx + '" title="删除">✕</button>' +
     '</div>';
-  }).join('') : '<p class="empty">错题本为空，输入一个没搞懂的知识点或拍照加入吧～</p>';
+  }).join('') : '<p class="empty">' + (activeTagFilter.length ? '没有同时选中这些标签的错题' : '错题本为空，输入一个没搞懂的知识点或拍照加入吧～') + '</p>';
 
   el.innerHTML =
     '<div class="eb-title">📓 错题本 2.0</div>' +
+    filterHtml +
     '<div class="eb-input-row">' +
       '<input type="text" id="ebInput" placeholder="如：泰勒公式没搞懂（回车加入）" />' +
       '<label class="eb-photo-btn" title="上传/拍照">📷<input type="file" id="ebPhoto" accept="image/*" capture="environment" hidden></label>' +
       '<button class="btn btn-primary btn-sm" id="ebAddBtn">加入</button>' +
+    '</div>' +
+    '<div class="eb-tag-presets">' +
+      '<span class="eb-tag-presets-label">标签：</span>' +
+      EB_PRESET_TAGS.map(function (t) {
+        return '<button class="eb-tag-preset" data-ebtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
+      }).join('') +
     '</div>' +
     '<div class="eb-preview" id="ebPreview" hidden></div>' +
     (queueCount ?
@@ -1585,6 +1690,19 @@ function renderErrorBook(state) {
       '</div>' : '') +
     '<div class="eb-list">' + list + '</div>' +
     '<p class="hint">每日自动从未掌握中挑 3-5 道进入今日时间轴 · 连续 3 次没掌握将红色高亮提示重点攻克</p>';
+
+  // 异步加载错题照片（IndexedDB）
+  const photoImgs = el.querySelectorAll('img.eb-thumb[data-photoid]');
+  photoImgs.forEach(function (img) {
+    const pid = img.dataset.photoid;
+    if (!pid) return;
+    // 先尝试直接用旧 photo 字段（兼容）
+    const e = eb[parseInt(img.dataset.ebphoto, 10)];
+    if (e && e.photo) { img.src = e.photo; return; }
+    getPhotoFromDB(pid).then(function (dataUrl) {
+      if (dataUrl) img.src = dataUrl;
+    });
+  });
 }
 
 /* 每日时间轴：插入"错题本复习"任务块（每天最多 1 条） */
@@ -1603,6 +1721,8 @@ function getDailyErrorReview(state, dateStr) {
 }
 
 /* ---------- 错题本复习模式（全屏卡片） ---------- */
+const EB_PRESET_TAGS = ['数学', '计组', '数据结构', '英语', '高频错题', '易混概念'];
+let activeTagFilter = []; // 当前选中的筛选标签（多选）
 let ebReviewIdx = 0;
 let ebReviewQueue = [];
 function openEbReviewMode(state) {
@@ -1630,8 +1750,9 @@ function renderEbReviewCard() {
   document.getElementById('ebReviewCard').innerHTML =
     '<div class="eb-card-progress">第 ' + (ebReviewIdx + 1) + ' / ' + ebReviewQueue.length + ' 题</div>' +
     '<div class="eb-card-body">' +
-      (e.photo ? '<img class="eb-card-img" src="' + e.photo + '" alt="错题照片">' : '<div class="eb-card-noimg">📷 无照片</div>') +
+      (e.photo ? '<img class="eb-card-img" src="' + e.photo + '" alt="错题照片">' : (e.photoId ? '<img class="eb-card-img" data-cardphotoid="' + escapeHtml(e.photoId) + '" alt="错题照片">' : '<div class="eb-card-noimg">📷 无照片</div>')) +
       '<div class="eb-card-text">' + escapeHtml(e.text || '(无文字)') + '</div>' +
+      (e.tags && e.tags.length ? '<div class="eb-card-tags">' + e.tags.map(function (t) { return '<span class="eb-card-tag" data-ebcardtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</span>'; }).join('') + '</div>' : '') +
       '<div class="eb-card-meta">已复习 ' + (e.reviewCount || 0) + ' 次 · 加入于 ' + formatDateCN(e.date || todayStr()) + '</div>' +
     '</div>' +
     '<div class="eb-card-actions">' +
@@ -1640,6 +1761,13 @@ function renderEbReviewCard() {
       '<button class="btn btn-ghost danger" data-ebmaster="no">🤔 不太理解</button>' +
       '<button class="btn btn-ghost" data-ebnav="next"' + (ebReviewIdx >= ebReviewQueue.length - 1 ? ' disabled' : '') + '>下一题 ▶</button>' +
     '</div>';
+  // 异步加载复习卡片照片（IndexedDB）
+  const cardImg = document.querySelector('#ebReviewCard img.eb-card-img[data-cardphotoid]');
+  if (cardImg) {
+    getPhotoFromDB(cardImg.dataset.cardphotoid).then(function (dataUrl) {
+      if (dataUrl) cardImg.src = dataUrl;
+    });
+  }
 }
 
 function openEditModal(b) {
@@ -1667,13 +1795,75 @@ function saveTimelineEdit() {
   const end = document.getElementById('editEnd').value;
   if (!name) { alert('名称不能为空'); return; }
   const state = loadState();
-  ensureDay(state, todayStr());
-  ensureTimeline(state, todayStr());
-  const b = findTimelineBlock(state, todayStr(), editingBlock.id);
+  ensureDay(state, editingDate);
+  ensureTimeline(state, editingDate);
+  const b = findTimelineBlock(state, editingDate, editingBlock.id);
   if (b) { b.name = name; b.note = note; if (start) b.start = start; if (end) b.end = end; b.customEdit = true; }
   saveState(state);
   closeModal();
-  renderTimeline(state, todayStr());
+  renderTimeline(state, timelineViewDate);
+  renderTasksPage(state, tasksViewDate);
+}
+
+/* ---------- 任务页：手动添加任务弹窗 ---------- */
+function openAddTaskModal() {
+  const subjectOptions = [
+    { key: 'math', label: '数学' },
+    { key: 'ds', label: '数据结构' },
+    { key: 'cs', label: '计组' },
+    { key: 'eng', label: '英语' },
+    { key: 'other', label: '其他' },
+  ];
+  document.getElementById('modalContent').innerHTML =
+    '<h3>➕ 添加任务</h3>' +
+    '<div class="edit-form">' +
+      '<label>任务名称</label><input id="addTaskName" placeholder="如：复习高数第一章错题">' +
+      '<label>所属科目</label><select id="addTaskSubj">' +
+        subjectOptions.map(function (s) { return '<option value="' + s.key + '">' + s.label + '</option>'; }).join('') +
+      '</select>' +
+      '<div class="row2">' +
+        '<div><label>开始时间</label><input id="addTaskStart" type="time"></div>' +
+        '<div><label>结束时间</label><input id="addTaskEnd" type="time"></div>' +
+      '</div>' +
+      '<label>备注（可选）</label><input id="addTaskNote" placeholder="可选">' +
+    '</div>' +
+    '<div class="modal-actions">' +
+      '<button class="btn btn-primary" onclick="saveNewTask()">添加</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+    '</div>';
+  openModal();
+}
+function saveNewTask() {
+  const name = document.getElementById('addTaskName').value.trim();
+  const subject = document.getElementById('addTaskSubj').value;
+  const start = document.getElementById('addTaskStart').value;
+  const end = document.getElementById('addTaskEnd').value;
+  const note = document.getElementById('addTaskNote').value.trim();
+  if (!name) { alert('任务名称不能为空'); return; }
+  const state = loadState();
+  const date = tasksViewDate;
+  ensureDay(state, date);
+  ensureTimeline(state, date);
+  const newBlock = {
+    id: 'custom-' + Date.now(),
+    type: 'task',
+    subject: subject,
+    name: name,
+    note: note,
+    start: start || '',
+    end: end || '',
+    done: false,
+    rating: 0,
+    actualMinutes: 0,
+    customEdit: true,
+  };
+  const day = state.days[date];
+  day.timeline = day.timeline || [];
+  day.timeline.push(newBlock);
+  saveState(state);
+  closeModal();
+  renderTasksPage(state, date);
+  renderTimeline(state, timelineViewDate);
 }
 
 /* ---------- 渲染：完整课表网格 ---------- */
@@ -1919,6 +2109,7 @@ function getWordSettings(state) {
     dailyNew: Math.max(1, parseInt(ws.dailyNew, 10) || WORD_DEFAULT_NEW),
     dailyReview: Math.max(0, parseInt(ws.dailyReview, 10) === 0 ? 0 : (parseInt(ws.dailyReview, 10) || WORD_DEFAULT_REVIEW)),
     target: Math.max(1, parseInt(ws.target, 10) || state.wordGoal || WORD_TARGET),
+    alreadyLearned: Math.max(0, parseInt(ws.alreadyLearned, 10) || 0),
   };
 }
 function getWordTarget(state) {
@@ -1928,16 +2119,25 @@ function getWordTarget(state) {
 function wordSettingsHtml(state) {
   const ws = getWordSettings(state);
   const daysForOneRound = Math.ceil(ws.target / ws.dailyNew);
+  const remain = Math.max(0, ws.target - ws.alreadyLearned);
+  const daysLeft = Math.max(0, daysUntil(getExamDate(state)));
+  const dailyRequired = daysLeft > 0 ? Math.ceil(remain / daysLeft) : remain;
   return '<div class="word-plan-chips">' +
       '<span>每日新词 ' + ws.dailyNew + ' 个</span>' +
       '<span>每日复习 ' + ws.dailyReview + ' 个</span>' +
+      '<span>已背 ' + ws.alreadyLearned + ' 个</span>' +
       '<span>大纲总量 ' + ws.target + ' 个</span>' +
     '</div>' +
     '<div class="word-settings">' +
+      '<label>考研大纲总词量 <input type="number" class="js-ws-target" min="500" max="20000" value="' + ws.target + '" inputmode="numeric"> 个</label>' +
+      '<label>到目前为止已背单词数 <input type="number" class="js-ws-learned" min="0" max="20000" value="' + ws.alreadyLearned + '" inputmode="numeric"> 个</label>' +
       '<label>每日计划背新词数 <input type="number" class="js-ws-new" min="1" max="500" value="' + ws.dailyNew + '" inputmode="numeric"> 个</label>' +
       '<label>每日计划复习旧词数 <input type="number" class="js-ws-review" min="0" max="2000" value="' + ws.dailyReview + '" inputmode="numeric"> 个</label>' +
-      '<label>考研大纲总词量 <input type="number" class="js-ws-target" min="500" max="20000" value="' + ws.target + '" inputmode="numeric"> 个</label>' +
       '<button class="btn btn-primary btn-sm js-wsave-btn" type="button">保存单词设置</button>' +
+    '</div>' +
+    '<div class="word-plan-chips">' +
+      '<span>剩余待背 <b>' + remain + '</b> 个</span>' +
+      '<span>距考研 <b>' + daysLeft + '</b> 天，平均每天需背 <b>' + dailyRequired + '</b> 个新词</span>' +
     '</div>' +
     '<p class="hint">按每日新词 ' + ws.dailyNew + ' 个计算，约 <b>' + daysForOneRound + '</b> 天可背完一轮大纲词。</p>';
 }
@@ -2510,7 +2710,7 @@ function renderTab(tab) {
   const state = loadState();
   const today = todayStr();
   if (tab === 'today') renderToday(state);
-  else if (tab === 'tasks') renderTasksPage(state, today);
+  else if (tab === 'tasks') { tasksViewDate = today; renderTasksPage(state, today); }
   else if (tab === 'schedule') {
     renderWeekdayTabs();
     renderDayCourses();
@@ -2845,7 +3045,7 @@ function bindEvents() {
       ensureDay(state, date);
       ensureTimeline(state, date);
       const b = findTimelineBlock(state, date, editBtn.dataset.tledit);
-      if (b) { editingBlock.id = b.id; openEditModal(b); }
+      if (b) { editingBlock.id = b.id; editingDate = date; openEditModal(b); }
     }
   });
 
@@ -2863,9 +3063,26 @@ function bindEvents() {
     if (e.target.value) setTimelineViewDate(e.target.value);
   });
 
+  // 任务清单页：前一天 / 后一天 / 回到今天
+  document.addEventListener('click', function (e) {
+    if (e.target.id === 'taskPrevDay') {
+      tasksViewDate = addDays(tasksViewDate, -1);
+      renderTasksPage(loadState(), tasksViewDate);
+    } else if (e.target.id === 'taskNextDay') {
+      tasksViewDate = addDays(tasksViewDate, 1);
+      renderTasksPage(loadState(), tasksViewDate);
+    } else if (e.target.id === 'taskBackToday') {
+      tasksViewDate = todayStr();
+      renderTasksPage(loadState(), tasksViewDate);
+    } else if (e.target.id === 'taskAddBtn') {
+      openAddTaskModal();
+    }
+  });
+
   // 功能 F：错题本 2.0（加入/照片上传/标记掌握/删除/复习模式/图片预览）
   const ebEl = document.getElementById('errorBook');
   let pendingPhoto = ''; // 暂存待加入的照片 base64
+  let pendingTags = []; // 暂存待加入错题的标签
   function compressPhoto(file, cb) {
     const reader = new FileReader();
     reader.onload = function () {
@@ -2899,19 +3116,52 @@ function bindEvents() {
     }
   });
   ebEl.addEventListener('click', function (e) {
+    // 标签预设按钮：切换待加入错题的标签
+    const presetBtn = e.target.closest('.eb-tag-preset');
+    if (presetBtn) {
+      const tag = presetBtn.dataset.ebtag;
+      const idx = pendingTags.indexOf(tag);
+      if (idx >= 0) { pendingTags.splice(idx, 1); presetBtn.classList.remove('active'); }
+      else { pendingTags.push(tag); presetBtn.classList.add('active'); }
+      return;
+    }
+    // 标签筛选芯片：多选切换
+    const filterBtn = e.target.closest('[data-ebtag-filter]');
+    if (filterBtn) {
+      const tag = filterBtn.dataset.ebtagFilter;
+      if (tag === '__all__') {
+        activeTagFilter = [];
+      } else {
+        const fi = activeTagFilter.indexOf(tag);
+        if (fi >= 0) activeTagFilter.splice(fi, 1);
+        else activeTagFilter.push(tag);
+      }
+      renderErrorBook(loadState());
+      return;
+    }
     const addBtn = e.target.closest('#ebAddBtn');
     if (addBtn) {
       const input = document.getElementById('ebInput');
       const text = input.value.trim();
       if (!text && !pendingPhoto) { alert('请输入错题文字或上传照片'); return; }
       const state = loadState();
-      getErrorBook(state).push({
-        id: 'eb-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-        text: text, photo: pendingPhoto, date: todayStr(),
+      const itemId = 'eb-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      const newItem = {
+        id: itemId,
+        text: text, photo: '', photoId: pendingPhoto ? itemId : '', date: todayStr(),
         mastered: false, reviewCount: 0, lastReviewDate: '',
-      });
+        tags: pendingTags.slice(),
+      };
+      getErrorBook(state).push(newItem);
       saveState(state);
+      // 异步保存照片到 IndexedDB（照片较大，不阻塞 UI）
+      if (pendingPhoto) {
+        savePhotoToDB(itemId, pendingPhoto).then(function () {
+          renderErrorBook(loadState());
+        });
+      }
       pendingPhoto = '';
+      pendingTags = [];
       input.value = '';
       renderErrorBook(state);
       renderTimeline(state, todayStr());
@@ -2935,12 +3185,18 @@ function bindEvents() {
       const i = parseInt(thumb.dataset.ebphoto, 10);
       const state = loadState();
       const eb = getErrorBook(state);
-      if (eb[i] && eb[i].photo) {
+      const item = eb[i];
+      if (!item) return;
+      const photoId = item.photoId || item.id;
+      const showPhoto = function (dataUrl) {
+        if (!dataUrl) return;
         document.getElementById('modalContent').innerHTML =
-          '<img class="eb-photo-full" src="' + eb[i].photo + '" alt="错题原图">' +
+          '<img class="eb-photo-full" src="' + dataUrl + '" alt="错题原图">' +
           '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>';
         openModal();
-      }
+      };
+      if (item.photo) { showPhoto(item.photo); }
+      else { getPhotoFromDB(photoId).then(showPhoto); }
       return;
     }
     const toggleBtn = e.target.closest('[data-ebtoggle]');
@@ -2979,6 +3235,15 @@ function bindEvents() {
   const ebReviewEl = document.getElementById('ebReviewOverlay');
   ebReviewEl.addEventListener('click', function (e) {
     if (e.target === ebReviewEl) { closeEbReviewMode(); return; }
+    // 点击复习卡片上的标签：关闭复习模式并按该标签筛选
+    const cardTag = e.target.closest('[data-ebcardtag]');
+    if (cardTag) {
+      const tag = cardTag.dataset.ebcardtag;
+      closeEbReviewMode();
+      activeTagFilter = [tag];
+      renderErrorBook(loadState());
+      return;
+    }
     const nav = e.target.closest('[data-ebnav]');
     if (nav) {
       if (nav.dataset.ebnav === 'prev') ebReviewIdx--;
@@ -3061,11 +3326,13 @@ function bindEvents() {
     const dailyNew = parseInt(wrap.querySelector('.js-ws-new').value, 10);
     const dailyReview = parseInt(wrap.querySelector('.js-ws-review').value, 10);
     const target = parseInt(wrap.querySelector('.js-ws-target').value, 10);
+    const alreadyLearned = parseInt(wrap.querySelector('.js-ws-learned').value, 10);
     if (!dailyNew || dailyNew < 1 || dailyNew > 500) { alert('每日新词数请输入 1-500 之间的数字'); return; }
     if (isNaN(dailyReview) || dailyReview < 0 || dailyReview > 2000) { alert('每日复习数请输入 0-2000 之间的数字'); return; }
     if (!target || target < 500 || target > 20000) { alert('大纲总词量请输入 500-20000 之间的数字'); return; }
+    if (isNaN(alreadyLearned) || alreadyLearned < 0 || alreadyLearned > 20000) { alert('已背单词数请输入 0-20000 之间的数字'); return; }
     const state = loadState();
-    state.wordSettings = { dailyNew: dailyNew, dailyReview: dailyReview, target: target };
+    state.wordSettings = { dailyNew: dailyNew, dailyReview: dailyReview, target: target, alreadyLearned: alreadyLearned };
     state.wordGoal = target; // 兼容旧字段
     saveState(state);
     renderWordGoal(state);

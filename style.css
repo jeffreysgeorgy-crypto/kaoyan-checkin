@@ -576,6 +576,34 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .eb-item.severe {
   background: #ffeaea !important; border-left: 4px solid #c62828;
 }
+/* 错题本：标签筛选栏 */
+.eb-tag-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.eb-tag-chip {
+  padding: 4px 12px; border-radius: 999px; border: 1px solid #d6e2da;
+  background: #fff; cursor: pointer; font-size: .8rem;
+}
+.eb-tag-chip.active { background: #3f8f62; color: #fff; border-color: #3f8f62; }
+/* 错题本：标签预设按钮 */
+.eb-tag-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+.eb-tag-presets-label { font-size: .78rem; color: #88948c; }
+.eb-tag-preset {
+  padding: 3px 10px; border-radius: 999px; border: 1px solid #d6e2da;
+  background: #f7faf8; cursor: pointer; font-size: .78rem;
+}
+.eb-tag-preset.active { background: #3f8f62; color: #fff; border-color: #3f8f62; }
+/* 错题本：条目标签 */
+.eb-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.eb-tag {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  background: #e8f5ed; color: #2f7a4e; font-size: .72rem;
+}
+/* 复习卡片：标签 */
+.eb-card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.eb-card-tag {
+  display: inline-block; padding: 4px 12px; border-radius: 999px;
+  background: #e8f5ed; color: #2f7a4e; font-size: .85rem; cursor: pointer;
+}
+.eb-card-tag:hover { background: #3f8f62; color: #fff; }
 .eb-review-entry {
   display: flex; justify-content: space-between; align-items: center;
   background: #fff7e0; border-radius: 10px; padding: 10px 12px;
@@ -754,6 +782,24 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .cat-task-foot .tl-minutes { width: 56px; }
 .cat-task.politics-note { background: #f2f4f6; border-style: dashed; }
 .cat-task.politics-note .cat-task-name { color: #4a5560; }
+
+/* 任务清单页：日期导航栏 */
+.task-date-nav {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.task-date-label {
+  font-weight: 700; font-size: .95rem; color: #2f5d50;
+  flex: 1; text-align: center; min-width: 130px;
+}
+.cat-edit-btn {
+  background: transparent; border: none; cursor: pointer;
+  font-size: 1rem; padding: 2px 6px; border-radius: 6px;
+  flex-shrink: 0;
+}
+.cat-edit-btn:hover { background: #f0f2f0; }
+.edit-form .row2 { display: flex; gap: 12px; }
+.edit-form .row2 > div { flex: 1; }
 
 /* ========== 课表页：固定课表 ========== */
 .fixed-schedule { display: flex; flex-direction: column; gap: 10px; }
