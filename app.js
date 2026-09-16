@@ -669,7 +669,8 @@ function matchSubjectFilter(block, filter) {
 }
 
 function collectTaskBlocks(state, dateStr) {
-  const day = ensureDay(state, dateStr);
+  // 必须走 ensureTimeline：任务页读的是 day.timeline，只调 ensureDay 会让历史/未来日期没有 timeline 而显示空白
+  const day = ensureTimeline(state, dateStr);
   const list = [];
   const seen = {}; // 防御：同 id 的脏数据块只显示一次
   function add(b, isPending) {
@@ -1761,6 +1762,7 @@ function renderErrorBook(state) {
       '</div>' +
       '<div class="eb-item-actions">' +
         '<button class="eb-toggle' + (e.mastered ? ' mastered' : '') + '" data-ebtoggle="' + realIdx + '" title="' + (e.mastered ? '标记未掌握' : '标记已掌握') + '">' + (e.mastered ? '✅ 已掌握' : '🤔 未掌握') + '</button>' +
+        '<button class="eb-editphoto-btn" data-ebeditphoto="' + realIdx + '" title="修改图片">🖼️ 图片</button>' +
         '<button class="eb-edittext-btn" data-ebedittext="' + realIdx + '" title="编辑文字">✏️ 文字</button>' +
         '<button class="eb-edittag" data-ebedittag="' + realIdx + '" title="编辑标签">🏷️ 标签</button>' +
         '<button class="eb-del" data-ebdel="' + realIdx + '" title="删除">🗑️</button>' +
@@ -3775,7 +3777,7 @@ function bindEvents() {
 
   /* 裁剪/编辑弹窗：可拖拽裁剪框 + 旋转，确认后压缩返回 */
   let cropState = null;
-  function openCropModal(srcDataUrl, onConfirm) {
+  function openCropModal(srcDataUrl, onConfirm, onCancel) {
     const modal = document.getElementById('modal');
     const mc = document.getElementById('modalContent');
     mc.innerHTML =
@@ -3870,7 +3872,7 @@ function bindEvents() {
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.removeEventListener('touchend', onUp);
-      closeModal();
+      if (onCancel) onCancel(); else closeModal();
     };
     mc.querySelector('#cropConfirm').onclick = function () {
       // 将裁剪框坐标映射回图片原始像素（考虑旋转）
@@ -4084,6 +4086,76 @@ function bindEvents() {
     if (editTextBtn) {
       const idx = parseInt(editTextBtn.dataset.ebedittext, 10);
       openEditTextModal(idx);
+      return;
+    }
+    // 修改图片：弹窗显示当前图 + 选择新图（复用裁剪/压缩流程），保存后覆盖 IndexedDB 原图
+    const editPhotoBtn = e.target.closest('[data-ebeditphoto]');
+    if (editPhotoBtn) {
+      const editIdx = parseInt(editPhotoBtn.dataset.ebeditphoto, 10);
+      let newPhoto = '';
+      function showEditPhotoModal() {
+        const st = loadState();
+        const item = getErrorBook(st)[editIdx];
+        if (!item) { closeModal(); return; }
+        const mc = document.getElementById('modalContent');
+        mc.innerHTML =
+          '<h3>🖼️ 修改错题图片</h3>' +
+          '<img class="eb-editphoto-current" id="ebEditPhotoCur' + (newPhoto ? '" src="' + newPhoto + '"' : '"') + ' alt="错题图片">' +
+          '<label class="btn btn-ghost btn-sm eb-editphoto-file" style="display:inline-block">📷 选择新图片' +
+            '<input type="file" id="ebEditPhotoInput" accept="image/*" hidden></label>' +
+          '<p class="eb-editphoto-tip">选择新图片后可裁剪/旋转；' + (newPhoto ? '已选好新图，点"保存替换"覆盖原图' : '尚未选择新图片') + '</p>' +
+          '<div class="modal-actions">' +
+            '<button class="btn btn-primary" id="ebEditPhotoSave"' + (newPhoto ? '' : ' disabled') + '>保存替换</button>' +
+            '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+          '</div>';
+        openModal();
+        // 未选新图时异步展示当前图（inline 兜底 / IndexedDB）
+        if (!newPhoto) {
+          const imgEl = document.getElementById('ebEditPhotoCur');
+          const showPlaceholder = function () {
+            if (!imgEl || imgEl.src) return;
+            const p = document.createElement('p');
+            p.className = 'empty';
+            p.textContent = '该错题暂无图片，请选择新图片';
+            imgEl.replaceWith(p);
+          };
+          if (item.photo) { imgEl.src = item.photo; }
+          else { getPhotoFromDB(item.photoId || item.id).then(function (u) { if (u && imgEl) imgEl.src = u; else showPlaceholder(); }); }
+        }
+        const fileInput = document.getElementById('ebEditPhotoInput');
+        fileInput.addEventListener('change', function (ev) {
+          const file = ev.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = function (r) {
+            openCropModal(r.target.result, function (cropped) {
+              // 裁剪确认（openCropModal 已关闭自己的弹窗）→ 带着新图重开修改弹窗
+              newPhoto = cropped;
+              showEditPhotoModal();
+            }, function () {
+              // 取消裁剪 → 回到修改图片弹窗
+              showEditPhotoModal();
+            });
+          };
+          reader.readAsDataURL(file);
+        });
+        document.getElementById('ebEditPhotoSave').addEventListener('click', function () {
+          if (!newPhoto) { alert('请先选择新图片'); return; }
+          const st2 = loadState();
+          const eb2 = getErrorBook(st2);
+          if (!eb2[editIdx]) { closeModal(); return; }
+          const it = eb2[editIdx];
+          const photoId = it.photoId || it.id;
+          it.photoId = photoId;
+          it.photo = ''; // 统一存入 IndexedDB，清掉旧的 inline base64
+          saveState(st2);
+          savePhotoToDB(photoId, newPhoto).then(function () {
+            renderErrorBook(loadState());
+          });
+          closeModal();
+        });
+      }
+      showEditPhotoModal();
       return;
     }
     // 掌握状态筛选
