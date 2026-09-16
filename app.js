@@ -1628,6 +1628,25 @@ function getErrorBook(state) {
   return state.errorBook;
 }
 
+/* 标签库：预设 + 用户自定义，去重后返回 */
+function getTagLibrary(state) {
+  state.tagLibrary = state.tagLibrary || [];
+  return EB_PRESET_TAGS.concat(state.tagLibrary).filter(function (t, i, arr) {
+    return arr.indexOf(t) === i;
+  });
+}
+
+/* 把自定义标签加入标签库（已存在则跳过） */
+function addTagToLibrary(state, tag) {
+  if (!tag) return;
+  if (EB_PRESET_TAGS.indexOf(tag) >= 0) return; // 预设不用存
+  state.tagLibrary = state.tagLibrary || [];
+  if (state.tagLibrary.indexOf(tag) < 0) state.tagLibrary.push(tag);
+}
+
+/* 错题本掌握状态筛选：'all' | 'unmastered' | 'mastered' */
+var ebMasteryFilter = 'all';
+
 /* 今日待复习队列：未掌握 + （上次复习不在今天或为空），最多 5 条 */
 function getTodayReviewQueue(state, dateStr) {
   const eb = getErrorBook(state);
@@ -1644,13 +1663,23 @@ function renderErrorBook(state) {
   const el = document.getElementById('errorBook');
   if (!el) return;
   const eb = getErrorBook(state);
+  const tagLib = getTagLibrary(state);
   const queue = getTodayReviewQueue(state, todayStr());
   const queueCount = queue.length;
 
-  // 收集所有已使用的标签
+  // 收集所有已使用的标签（标签库 + 已使用），去重
   const allTags = {};
+  tagLib.forEach(function (t) { allTags[t] = true; });
   eb.forEach(function (e) { (e.tags || []).forEach(function (t) { allTags[t] = true; }); });
   const usedTags = Object.keys(allTags);
+
+  // 掌握状态筛选栏
+  const masteryHtml = '<div class="eb-mastery-filter">' +
+    '<button class="eb-mastery-btn' + (ebMasteryFilter === 'all' ? ' active' : '') + '" data-ebmastery="all">全部 (' + eb.length + ')</button>' +
+    '<button class="eb-mastery-btn' + (ebMasteryFilter === 'unmastered' ? ' active' : '') + '" data-ebmastery="unmastered">🤔 未掌握 (' + eb.filter(function (e) { return !e.mastered; }).length + ')</button>' +
+    '<button class="eb-mastery-btn' + (ebMasteryFilter === 'mastered' ? ' active' : '') + '" data-ebmastery="mastered">✅ 已掌握 (' + eb.filter(function (e) { return e.mastered; }).length + ')</button>' +
+    '<button class="eb-manage-tags-btn" id="ebManageTagsBtn" title="管理标签库">⚙️ 标签库</button>' +
+  '</div>';
 
   // 标签筛选栏（多选）
   const filterHtml = '<div class="eb-tag-filter">' +
@@ -1660,13 +1689,17 @@ function renderErrorBook(state) {
     }).join('') +
   '</div>';
 
-  // 按选中标签过滤（需同时包含所有选中标签）
-  const filtered = activeTagFilter.length === 0 ? eb : eb.filter(function (e) {
-    return activeTagFilter.every(function (t) { return (e.tags || []).indexOf(t) >= 0; });
-  });
+  // 按掌握状态 + 选中标签过滤
+  let filtered = eb;
+  if (ebMasteryFilter === 'unmastered') filtered = filtered.filter(function (e) { return !e.mastered; });
+  else if (ebMasteryFilter === 'mastered') filtered = filtered.filter(function (e) { return e.mastered; });
+  if (activeTagFilter.length) {
+    filtered = filtered.filter(function (e) {
+      return activeTagFilter.every(function (t) { return (e.tags || []).indexOf(t) >= 0; });
+    });
+  }
 
   const list = filtered.length ? filtered.map(function (e, i) {
-    // i 是 filtered 中的索引，需要在原始 eb 中找真实索引用于操作
     const realIdx = eb.indexOf(e);
     const severe = (e.reviewCount || 0) >= 3 && !e.mastered;
     const hasPhoto = e.photoId || e.photo;
@@ -1679,14 +1712,18 @@ function renderErrorBook(state) {
         (e.reviewCount ? '<span class="eb-rc">复习 ' + e.reviewCount + ' 次</span>' : '') +
         (severe ? '<span class="eb-flag">⚠️ 重点攻克</span>' : '') +
       '</div>' +
-      '<button class="eb-toggle" data-ebtoggle="' + realIdx + '" title="标记已掌握">' + (e.mastered ? '↩' : '✓') + '</button>' +
-      '<button class="eb-edittag" data-ebedittag="' + realIdx + '" title="编辑标签">✏️ 标签</button>' +
-      '<button class="eb-del" data-ebdel="' + realIdx + '" title="删除">✕</button>' +
+      '<div class="eb-item-actions">' +
+        '<button class="eb-toggle' + (e.mastered ? ' mastered' : '') + '" data-ebtoggle="' + realIdx + '" title="' + (e.mastered ? '标记未掌握' : '标记已掌握') + '">' + (e.mastered ? '✅ 已掌握' : '🤔 未掌握') + '</button>' +
+        '<button class="eb-edittext-btn" data-ebedittext="' + realIdx + '" title="编辑文字">✏️ 文字</button>' +
+        '<button class="eb-edittag" data-ebedittag="' + realIdx + '" title="编辑标签">🏷️ 标签</button>' +
+        '<button class="eb-del" data-ebdel="' + realIdx + '" title="删除">🗑️</button>' +
+      '</div>' +
     '</div>';
-  }).join('') : '<p class="empty">' + (activeTagFilter.length ? '没有同时选中这些标签的错题' : '错题本为空，输入一个没搞懂的知识点或拍照加入吧～') + '</p>';
+  }).join('') : '<p class="empty">' + ((activeTagFilter.length || ebMasteryFilter !== 'all') ? '没有符合筛选条件的错题' : '错题本为空，输入一个没搞懂的知识点或拍照加入吧～') + '</p>';
 
   el.innerHTML =
     '<div class="eb-title">📓 错题本 2.0</div>' +
+    masteryHtml +
     filterHtml +
     '<div class="eb-input-row">' +
       '<input type="text" id="ebInput" placeholder="如：泰勒公式没搞懂（回车加入）" />' +
@@ -1695,7 +1732,7 @@ function renderErrorBook(state) {
     '</div>' +
     '<div class="eb-tag-presets">' +
       '<span class="eb-tag-presets-label">标签：</span>' +
-      EB_PRESET_TAGS.map(function (t) {
+      tagLib.map(function (t) {
         return '<button class="eb-tag-preset' + (pendingTags.indexOf(t) >= 0 ? ' active' : '') + '" data-ebtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
       }).join('') +
       (pendingTags.length ? '<span class="eb-pending-tags-hint">已选 ' + pendingTags.length + ' 个：' + pendingTags.map(function (t) { return '<b>' + escapeHtml(t) + '</b>'; }).join('、') + '</span>' : '') +
@@ -1714,7 +1751,6 @@ function renderErrorBook(state) {
   photoImgs.forEach(function (img) {
     const pid = img.dataset.photoid;
     if (!pid) return;
-    // 先尝试直接用旧 photo 字段（兼容）
     const e = eb[parseInt(img.dataset.ebphoto, 10)];
     if (e && e.photo) { img.src = e.photo; return; }
     getPhotoFromDB(pid).then(function (dataUrl) {
@@ -1741,13 +1777,14 @@ function openEditTagsModal(idx) {
 function renderEditTagsModal() {
   const mc = document.getElementById('modalContent');
   const current = editingTagList.slice();
+  const tagLib = getTagLibrary(loadState());
   const currentHtml = current.length
     ? current.map(function (t) {
         return '<span class="eb-tag eb-tag-removable" data-rmtag="' + escapeHtml(t) + '">' + escapeHtml(t) + ' ✕</span>';
       }).join('')
     : '<span class="hint" style="color:#999">暂无标签，从下方选择或输入</span>';
 
-  const presetHtml = EB_PRESET_TAGS.map(function (t) {
+  const presetHtml = tagLib.map(function (t) {
     const active = current.indexOf(t) >= 0;
     return '<button class="eb-tag-preset' + (active ? ' active' : '') + '" data-addtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</button>';
   }).join('');
@@ -1759,11 +1796,11 @@ function renderEditTagsModal() {
       '<div class="eb-tags">' + currentHtml + '</div>' +
     '</div>' +
     '<div class="eb-edit-tags-presets">' +
-      '<div class="eb-edit-tags-label">从预设选择：</div>' +
+      '<div class="eb-edit-tags-label">从标签库选择：</div>' +
       '<div class="eb-tag-presets">' + presetHtml + '</div>' +
     '</div>' +
     '<div class="eb-edit-tags-custom">' +
-      '<div class="eb-edit-tags-label">自定义标签：</div>' +
+      '<div class="eb-edit-tags-label">自定义新标签（自动加入标签库）：</div>' +
       '<div style="display:flex;gap:8px">' +
         '<input type="text" id="ebCustomTagInput" placeholder="输入标签名，如：线性代数" maxlength="12">' +
         '<button class="btn btn-ghost btn-sm" id="ebAddCustomTag">添加</button>' +
@@ -1792,12 +1829,15 @@ function renderEditTagsModal() {
       renderEditTagsModal();
     });
   });
-  // 自定义标签
+  // 自定义标签（加入当前 + 入库）
   const customInput = document.getElementById('ebCustomTagInput');
   const addCustom = function () {
     const v = (customInput.value || '').trim();
     if (!v) return;
     if (editingTagList.indexOf(v) < 0) editingTagList.push(v);
+    const st = loadState();
+    addTagToLibrary(st, v);
+    saveState(st);
     customInput.value = '';
     renderEditTagsModal();
   };
@@ -1816,6 +1856,133 @@ function renderEditTagsModal() {
     }
     closeModal();
   });
+}
+
+/* ---------- 删除确认弹窗 ---------- */
+function openDeleteConfirmModal(idx) {
+  const state = loadState();
+  const eb = getErrorBook(state);
+  const item = eb[idx];
+  if (!item) return;
+  const preview = (item.text || '（无文字）').slice(0, 40);
+  const mc = document.getElementById('modalContent');
+  mc.innerHTML =
+    '<h3>🗑️ 确认删除</h3>' +
+    '<p style="color:#5a6b60;line-height:1.6">确定要删除这道错题吗？<br><b style="color:#c62828">删除后不可恢复。</b></p>' +
+    '<div class="eb-delete-preview">' + escapeHtml(preview) + (item.text && item.text.length > 40 ? '...' : '') + '</div>' +
+    '<div class="modal-actions">' +
+      '<button class="btn danger" id="ebConfirmDelete">确认删除</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+    '</div>';
+  document.getElementById('ebConfirmDelete').addEventListener('click', function () {
+    const st = loadState();
+    const eb2 = getErrorBook(st);
+    eb2.splice(idx, 1);
+    saveState(st);
+    closeModal();
+    renderErrorBook(st);
+    renderTimeline(st, todayStr());
+  });
+  openModal();
+}
+
+/* ---------- 编辑错题文字弹窗 ---------- */
+function openEditTextModal(idx) {
+  const state = loadState();
+  const eb = getErrorBook(state);
+  const item = eb[idx];
+  if (!item) return;
+  const mc = document.getElementById('modalContent');
+  mc.innerHTML =
+    '<h3>✏️ 编辑错题描述</h3>' +
+    '<textarea id="ebEditTextArea" rows="5" placeholder="修正错别字、补充思路、补充错因...">' + escapeHtml(item.text || '') + '</textarea>' +
+    '<div class="modal-actions">' +
+      '<button class="btn btn-primary" id="ebSaveText">保存</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+    '</div>';
+  const ta = document.getElementById('ebEditTextArea');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  document.getElementById('ebSaveText').addEventListener('click', function () {
+    const v = ta.value.trim();
+    const st = loadState();
+    const eb2 = getErrorBook(st);
+    if (eb2[idx]) {
+      eb2[idx].text = v;
+      saveState(st);
+      renderErrorBook(st);
+      renderTimeline(st, todayStr());
+    }
+    closeModal();
+  });
+  openModal();
+}
+
+/* ---------- 标签库管理弹窗 ---------- */
+function openTagLibraryModal() {
+  const state = loadState();
+  const customTags = state.tagLibrary || [];
+  const mc = document.getElementById('modalContent');
+
+  function render() {
+    const customHtml = customTags.length
+      ? customTags.map(function (t) {
+          return '<div class="eb-lib-tag-row"><span class="eb-tag">' + escapeHtml(t) + '</span>' +
+            '<button class="btn btn-ghost btn-sm eb-lib-rename" data-rename="' + escapeHtml(t) + '">重命名</button>' +
+            '<button class="btn danger btn-sm" data-libdel="' + escapeHtml(t) + '">删除</button></div>';
+        }).join('')
+      : '<p class="hint" style="color:#999">暂无自定义标签，去错题编辑里创建吧～</p>';
+
+    const presetHtml = '<div class="eb-edit-tags-label">预设标签（不可删除）：</div>' +
+      '<div class="eb-tag-presets">' + EB_PRESET_TAGS.map(function (t) {
+        return '<span class="eb-tag">' + escapeHtml(t) + '</span>';
+      }).join('') + '</div>';
+
+    mc.innerHTML =
+      '<h3>⚙️ 标签库管理</h3>' +
+      presetHtml +
+      '<div class="eb-edit-tags-label" style="margin-top:12px">自定义标签（' + customTags.length + ' 个）：</div>' +
+      '<div class="eb-lib-list">' + customHtml + '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-ghost" onclick="closeModal()">关闭</button>' +
+      '</div>';
+
+    mc.querySelectorAll('[data-libdel]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const tag = btn.dataset.libdel;
+        if (!confirm('确定从标签库删除"' + tag + '"吗？\n已使用该标签的错题不受影响。')) return;
+        const i = customTags.indexOf(tag);
+        if (i >= 0) customTags.splice(i, 1);
+        state.tagLibrary = customTags.slice();
+        saveState(state);
+        render();
+      });
+    });
+    mc.querySelectorAll('[data-rename]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const oldTag = btn.dataset.rename;
+        const newTag = prompt('重命名标签 "' + oldTag + '" 为：', oldTag);
+        if (!newTag || newTag.trim() === oldTag) return;
+        const nt = newTag.trim();
+        if (EB_PRESET_TAGS.indexOf(nt) >= 0) { alert('该名称与预设标签重复'); return; }
+        const i = customTags.indexOf(oldTag);
+        if (i >= 0) customTags[i] = nt;
+        // 同步已使用该标签的所有错题
+        const st = loadState();
+        const eb = getErrorBook(st);
+        eb.forEach(function (e) {
+          if (e.tags && e.tags.indexOf(oldTag) >= 0) {
+            e.tags = e.tags.map(function (t) { return t === oldTag ? nt : t; });
+          }
+        });
+        st.tagLibrary = customTags.slice();
+        saveState(st);
+        render();
+      });
+    });
+  }
+  render();
+  openModal();
 }
 
 /* 每日时间轴：插入"错题本复习"任务块（每天最多 1 条） */
@@ -2880,10 +3047,32 @@ function renderStats(state) {
   renderWordProgress(state);
   renderWordStatsCard(state);
   renderChart(state);
+  renderEbStats(state);
   renderProcrastinationStats(state);
   renderStudyTime();
   renderPomoStats(state);
   renderHistory(state);
+}
+
+/* ---------- 统计页：错题本统计 ---------- */
+function renderEbStats(state) {
+  const el = document.getElementById('ebStatsCard');
+  if (!el) return;
+  const eb = getErrorBook(state);
+  const total = eb.length;
+  const mastered = eb.filter(function (e) { return e.mastered; }).length;
+  const unmastered = total - mastered;
+  const rate = total > 0 ? Math.round(mastered / total * 100) : 0;
+  const severe = eb.filter(function (e) { return (e.reviewCount || 0) >= 3 && !e.mastered; }).length;
+  el.innerHTML =
+    '<div class="eb-stats-grid">' +
+      '<div class="eb-stat-box"><div class="eb-stat-num">' + total + '</div><div class="eb-stat-label">错题总数</div></div>' +
+      '<div class="eb-stat-box ok"><div class="eb-stat-num">' + mastered + '</div><div class="eb-stat-label">已掌握</div></div>' +
+      '<div class="eb-stat-box warn"><div class="eb-stat-num">' + unmastered + '</div><div class="eb-stat-label">未掌握</div></div>' +
+      '<div class="eb-stat-box accent"><div class="eb-stat-num">' + rate + '%</div><div class="eb-stat-label">掌握率</div></div>' +
+    '</div>' +
+    '<div class="bar"><div class="bar-fill fill-word" style="width:' + rate + '%"></div></div>' +
+    (severe > 0 ? '<div class="word-lag-warn">⚠️ 有 <b>' + severe + '</b> 道错题反复未掌握（≥3次），建议重点攻克</div>' : '<div class="wt-ok">✅ 暂无反复未掌握的错题</div>');
 }
 
 /* ---------- 统计页：番茄钟累计统计 ---------- */
@@ -3456,6 +3645,8 @@ function bindEvents() {
         tags: pendingTags.slice(),
       };
       getErrorBook(state).push(newItem);
+      // 把选中的自定义标签入库（预设不需要）
+      pendingTags.forEach(function (t) { addTagToLibrary(state, t); });
       saveState(state);
       // 异步保存照片到 IndexedDB（照片较大，不阻塞 UI）
       if (pendingPhoto) {
@@ -3502,29 +3693,33 @@ function bindEvents() {
       else { getPhotoFromDB(photoId).then(showPhoto); }
       return;
     }
+    // 掌握状态切换
     const toggleBtn = e.target.closest('[data-ebtoggle]');
     if (toggleBtn) {
       const idx = parseInt(toggleBtn.dataset.ebtoggle, 10);
       const state = loadState();
       const eb = getErrorBook(state);
       if (eb[idx]) {
-        eb[idx].mastered = !eb[idx].mastered;
-        if (eb[idx].mastered) { eb[idx].lastReviewDate = todayStr(); }
+        const nowMastered = !eb[idx].mastered;
+        eb[idx].mastered = nowMastered;
+        if (nowMastered) {
+          eb[idx].lastReviewDate = todayStr();
+        } else {
+          // 标记为未掌握：复习次数+1，回到复习队列
+          eb[idx].reviewCount = (eb[idx].reviewCount || 0) + 1;
+          eb[idx].lastReviewDate = '';
+        }
         saveState(state);
         renderErrorBook(state);
         renderTimeline(state, todayStr());
       }
       return;
     }
+    // 删除（二次确认）
     const delBtn = e.target.closest('[data-ebdel]');
     if (delBtn) {
       const idx = parseInt(delBtn.dataset.ebdel, 10);
-      const state = loadState();
-      const eb = getErrorBook(state);
-      eb.splice(idx, 1);
-      saveState(state);
-      renderErrorBook(state);
-      renderTimeline(state, todayStr());
+      openDeleteConfirmModal(idx);
       return;
     }
     // 编辑标签
@@ -3532,6 +3727,25 @@ function bindEvents() {
     if (editTagBtn) {
       const idx = parseInt(editTagBtn.dataset.ebedittag, 10);
       openEditTagsModal(idx);
+      return;
+    }
+    // 编辑文字
+    const editTextBtn = e.target.closest('[data-ebedittext]');
+    if (editTextBtn) {
+      const idx = parseInt(editTextBtn.dataset.ebedittext, 10);
+      openEditTextModal(idx);
+      return;
+    }
+    // 掌握状态筛选
+    const masteryBtn = e.target.closest('[data-ebmastery]');
+    if (masteryBtn) {
+      ebMasteryFilter = masteryBtn.dataset.ebmastery;
+      renderErrorBook(loadState());
+      return;
+    }
+    // 管理标签库
+    if (e.target.closest('#ebManageTagsBtn')) {
+      openTagLibraryModal();
       return;
     }
   });
@@ -3573,7 +3787,10 @@ function bindEvents() {
         if (master.dataset.ebmaster === 'yes') {
           item.mastered = true;
         } else {
+          // 标记未掌握：回到复习队列，复习次数+1
+          item.mastered = false;
           item.reviewCount = (item.reviewCount || 0) + 1;
+          item.lastReviewDate = '';
         }
         saveState(state);
         // 同步队列里这条

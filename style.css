@@ -1268,3 +1268,76 @@ table.schedule .sc-loc { font-size: .64rem; }
   font-size: .78rem; color: #2f6f4b; margin-left: 8px; align-self: center;
 }
 .eb-pending-tags-hint b { color: #1a4d33; }
+
+/* ========== 错题本：掌握状态筛选 + 卡片操作区 ========== */
+.eb-mastery-filter {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px;
+}
+.eb-mastery-btn {
+  padding: 6px 12px; border: 1px solid #d0ddd3; background: #fff; color: #4a574f;
+  border-radius: 999px; cursor: pointer; font-size: .84rem; font-weight: 600;
+}
+.eb-mastery-btn.active { background: #3f8f62; color: #fff; border-color: #3f8f62; }
+.eb-manage-tags-btn {
+  margin-left: auto; padding: 6px 10px; border: 1px solid #d0ddd3; background: #f7faf8;
+  color: #4a574f; border-radius: 999px; cursor: pointer; font-size: .82rem;
+}
+.eb-manage-tags-btn:hover { background: #eef5ef; }
+
+/* 卡片操作按钮组 */
+.eb-item-actions {
+  display: flex; flex-direction: column; gap: 5px; flex-shrink: 0;
+}
+.eb-edittext-btn {
+  background: #f0f7f2; border: 1px solid #cfe5d4; color: #2f6f4b;
+  cursor: pointer; font-size: .76rem; padding: 3px 8px; border-radius: 6px;
+  font-weight: 600;
+}
+.eb-edittext-btn:hover { background: #e4f1e8; }
+.eb-toggle {
+  cursor: pointer; font-size: .76rem; padding: 4px 8px; border-radius: 6px;
+  font-weight: 600; border: 1px solid transparent; white-space: nowrap;
+}
+.eb-toggle:not(.mastered) { background: #fff4e5; color: #b86b00; border-color: #ffe0b3; }
+.eb-toggle.mastered { background: #e8f5ed; color: #2f6f4b; border-color: #c5e6d2; }
+.eb-toggle:hover { opacity: .85; }
+
+/* 删除确认预览 */
+.eb-delete-preview {
+  background: #f7faf8; border: 1px dashed #d0ddd3; border-radius: 8px;
+  padding: 12px; margin: 12px 0; color: #4a574f; font-size: .92rem;
+}
+#ebEditTextArea {
+  width: 100%; box-sizing: border-box; padding: 10px 12px;
+  border: 1px solid #d0ddd3; border-radius: 8px; font-size: .92rem;
+  font-family: inherit; resize: vertical; min-height: 90px; outline: none;
+}
+#ebEditTextArea:focus { border-color: #3f8f62; }
+
+/* 标签库管理 */
+.eb-lib-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.eb-lib-tag-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: #f7faf8; border-radius: 8px;
+}
+.eb-lib-tag-row .eb-tag { flex-shrink: 0; }
+.eb-lib-rename { margin-left: auto; }
+
+/* 错题本统计卡片 */
+.eb-stats-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px;
+}
+.eb-stat-box {
+  background: #f7faf8; border-radius: 10px; padding: 14px 8px; text-align: center;
+}
+.eb-stat-box.ok { background: #e8f5ed; }
+.eb-stat-box.warn { background: #fff4e5; }
+.eb-stat-box.accent { background: #eef2ff; }
+.eb-stat-num { font-size: 1.5rem; font-weight: 800; color: #26342c; line-height: 1.2; }
+.eb-stat-box.ok .eb-stat-num { color: #2f6f4b; }
+.eb-stat-box.warn .eb-stat-num { color: #b86b00; }
+.eb-stat-box.accent .eb-stat-num { color: #4c51bf; }
+.eb-stat-label { font-size: .76rem; color: #6b7a70; margin-top: 4px; }
+@media (max-width: 480px) {
+  .eb-stats-grid { grid-template-columns: repeat(2, 1fr); }
+}

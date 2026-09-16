@@ -1,11 +1,11 @@
 // Service Worker —— 考研打卡 PWA 离线缓存
-var CACHE_VER = 'kaoyan-v20260916e';
+var CACHE_VER = 'kaoyan-v20260916f';
 var CORE_FILES = [
   './',
   './index.html',
-  './style.css?v=20260916e',
-  './app.js?v=20260916e',
-  './data.js?v=20260916e',
+  './style.css?v=20260916f',
+  './app.js?v=20260916f',
+  './data.js?v=20260916f',
   './manifest.json',
   './icon.svg',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'
