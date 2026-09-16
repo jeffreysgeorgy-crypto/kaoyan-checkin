@@ -345,6 +345,7 @@ function ensureDay(state, dateStr) {
       words: { newCount: 0, reviewCount: 0 },
       problems: { math: 0, cs: 0 },
       reflection: { accomplishment: '', confusion: '', tomorrow: '' },
+      murmurs: { concerns: '', unhappy: '', mood: '', inspirational: '' },
       pomodoros: 0,
       studyMinutes: 0,
     };
@@ -363,6 +364,7 @@ function ensureDay(state, dateStr) {
   day.words = day.words || { newCount: 0, reviewCount: 0 };
   day.problems = day.problems || { math: 0, cs: 0 };
   day.reflection = day.reflection || { accomplishment: '', confusion: '', tomorrow: '' };
+  day.murmurs = day.murmurs || { concerns: '', unhappy: '', mood: '', inspirational: '' };
   day.pomodoros = day.pomodoros || 0;
   day.studyMinutes = day.studyMinutes || 0;
   return day;
@@ -575,6 +577,50 @@ function renderReflectionHistory(state, dateStr) {
       (r.accomplishment ? '<div class="rh-row"><span class="rh-tag accent">成就感</span><span class="rh-text">' + escapeHtml(r.accomplishment) + '</span></div>' : '') +
       (r.confusion ? '<div class="rh-row"><span class="rh-tag warn">困惑</span><span class="rh-text">' + escapeHtml(r.confusion) + '</span></div>' : '') +
       (r.tomorrow ? '<div class="rh-row"><span class="rh-tag info">明日优先</span><span class="rh-text">' + escapeHtml(r.tomorrow) + '</span></div>' : '') +
+    '</div>';
+  }).join('');
+}
+
+/* ---------- 渲染：碎碎念 ---------- */
+const MURMURS_FIELDS = [
+  { id: 'murmurConcerns', key: 'concerns', label: '💔 心事' },
+  { id: 'murmurUnhappy', key: 'unhappy', label: '😢 不开心的事' },
+  { id: 'murmurMood', key: 'mood', label: '🌧️ 小情绪' },
+  { id: 'murmurInspirational', key: 'inspirational', label: '✨ 励志句子' },
+];
+function renderMurmurs(state, dateStr) {
+  const day = ensureDay(state, dateStr);
+  MURMURS_FIELDS.forEach(function (f) {
+    const el = document.getElementById(f.id);
+    if (el) el.value = (day.murmurs && day.murmurs[f.key]) || '';
+  });
+  renderMurmursHistory(state, dateStr);
+}
+function renderMurmursHistory(state, dateStr) {
+  const el = document.getElementById('murmursHistory');
+  if (!el) return;
+  const days = state.days || {};
+  const records = [];
+  for (let i = 1; i <= 14; i++) {
+    const d = addDays(dateStr, -i);
+    const day = days[d];
+    if (!day || !day.murmurs) continue;
+    const m = day.murmurs;
+    if (!(m.concerns || m.unhappy || m.mood || m.inspirational)) continue;
+    records.push({ date: d, murmurs: m });
+  }
+  if (records.length === 0) {
+    el.innerHTML = '<p class="empty">暂无历史碎碎念记录，给心情一个出口吧 💭</p>';
+    return;
+  }
+  el.innerHTML = records.map(function (rec) {
+    const m = rec.murmurs;
+    return '<div class="rh-item">' +
+      '<div class="rh-date">' + formatDateCN(rec.date) + '</div>' +
+      (m.concerns ? '<div class="rh-row"><span class="rh-tag warn">心事</span><span class="rh-text">' + escapeHtml(m.concerns) + '</span></div>' : '') +
+      (m.unhappy ? '<div class="rh-row"><span class="rh-tag warn">不开心</span><span class="rh-text">' + escapeHtml(m.unhappy) + '</span></div>' : '') +
+      (m.mood ? '<div class="rh-row"><span class="rh-tag info">小情绪</span><span class="rh-text">' + escapeHtml(m.mood) + '</span></div>' : '') +
+      (m.inspirational ? '<div class="rh-row"><span class="rh-tag accent">励志</span><span class="rh-text">' + escapeHtml(m.inspirational) + '</span></div>' : '') +
     '</div>';
   }).join('');
 }
@@ -2430,8 +2476,8 @@ function wordSettingsHtml(state) {
   const ws = getWordSettings(state);
   const daysForOneRound = Math.ceil(ws.target / ws.dailyNew);
   const remain = Math.max(0, ws.target - ws.alreadyLearned);
-  const daysLeft = Math.max(0, daysUntil(getExamDate(state)));
-  const dailyRequired = daysLeft > 0 ? Math.ceil(remain / daysLeft) : remain;
+  // 今日待背单词 = 每日新词 + 每日复习（覆盖当天计划的总单词量）
+  const todayDue = ws.dailyNew + ws.dailyReview;
   return '<div class="word-plan-chips">' +
       '<span>每日新词 ' + ws.dailyNew + ' 个</span>' +
       '<span>每日复习 ' + ws.dailyReview + ' 个</span>' +
@@ -2447,7 +2493,7 @@ function wordSettingsHtml(state) {
     '</div>' +
     '<div class="word-plan-chips">' +
       '<span>剩余待背 <b>' + remain + '</b> 个</span>' +
-      '<span>距考研 <b>' + daysLeft + '</b> 天，平均每天需背 <b>' + dailyRequired + '</b> 个新词</span>' +
+      '<span>今天待背单词 <b>' + todayDue + '</b> 个</span>' +
     '</div>' +
     '<p class="hint">按每日新词 ' + ws.dailyNew + ' 个计算，约 <b>' + daysForOneRound + '</b> 天可背完一轮大纲词。</p>';
 }
@@ -2553,17 +2599,11 @@ function getTodayPomodoros() {
   const day = state.days && state.days[todayStr()];
   return (day && day.pomodoros) || 0;
 }
-/* 今日专注总分钟数 = 各 timeline block 的 actualMinutes + pomo.sessionMinutes 兜底 */
+/* 今日专注总分钟数 = day.studyMinutes（专注计时器结束 / 手动补录都会累加到这个字段）
+   注意：不再叠加各 block.actualMinutes —— 二者本是同源数据，叠加会重复计数，造成"屏幕时间"虚高错觉 */
 function getTodayFocusMinutes(state) {
   const day = state.days && state.days[todayStr()];
-  let sum = (day && day.studyMinutes) || 0;
-  if (day && day.timeline) {
-    day.timeline.forEach(function (b) { sum += (b.actualMinutes || 0); });
-  }
-  if (day && day.pendingPool) {
-    day.pendingPool.forEach(function (b) { sum += (b.actualMinutes || 0); });
-  }
-  return sum;
+  return (day && day.studyMinutes) || 0;
 }
 function getTodayMaxFocus(state) {
   const day = state.days && state.days[todayStr()];
@@ -2579,8 +2619,6 @@ function getWeekFocusMinutes(state) {
     const day = state.days && state.days[d];
     if (!day) continue;
     total += day.studyMinutes || 0;
-    if (day.timeline) day.timeline.forEach(function (b) { total += (b.actualMinutes || 0); });
-    if (day.pendingPool) day.pendingPool.forEach(function (b) { total += (b.actualMinutes || 0); });
   }
   return total;
 }
@@ -3077,13 +3115,16 @@ function renderFocusLog(state) {
     // 最近的记录排最前
     const list = entries.slice().reverse();
     html += '<div class="focuslog-list">' + list.map(function (x) {
-      const tag = (x.subject && SUBJECT_LABELS[x.subject]) ? '<span class="focuslog-subj">' + SUBJECT_LABELS[x.subject] + '</span>' : '';
+      // 专注记录不展示任务全名：优先用科目名（英语/数据结构/数学…），科目为空时退回到去掉"（手动补录）"后缀的任务名，最后兜底"自由专注"
+      const subjLabel = (x.subject && SUBJECT_LABELS[x.subject]) ? SUBJECT_LABELS[x.subject] : '';
+      const cleanName = (x.name || '').replace(/（手动补录）$/, '').trim();
+      const displayName = subjLabel || cleanName || '自由专注';
       // 周/月范围下在时间列前补充日期
       const datePrefix = focusRange === 'today' ? '' : (toStr(new Date(x.ts)).slice(5) + '<br>');
       return '<div class="focuslog-item">' +
         '<div class="focuslog-time">' + datePrefix + x.start + '<br>- ' + x.end + '</div>' +
         '<div class="focuslog-body">' +
-          '<div class="focuslog-name">' + tag + escapeHtml(x.name) + '</div>' +
+          '<div class="focuslog-name">' + escapeHtml(displayName) + '</div>' +
           '<div class="focuslog-dur">🍅 专注 ' + x.minutes + ' 分钟</div>' +
         '</div>' +
       '</div>';
@@ -3187,6 +3228,7 @@ function renderTab(tab) {
     renderFixedSchedule();
   } else if (tab === 'mistakes') renderErrorBook(state);
   else if (tab === 'reflection') renderReflection(state, today);
+  else if (tab === 'murmurs') renderMurmurs(state, today);
   else if (tab === 'stats') renderStats(state);
   else if (tab === 'focus') renderFocusPage(state);
   else if (tab === 'me') renderMe(state);
@@ -3273,9 +3315,8 @@ function renderPomoStats(state) {
     const d = days[k];
     if (!d) return;
     totalPomos += d.pomodoros || 0;
-    let min = (d.studyMinutes || 0);
-    if (d.timeline) d.timeline.forEach(function (b) { min += (b.actualMinutes || 0); });
-    if (d.pendingPool) d.pendingPool.forEach(function (b) { min += (b.actualMinutes || 0); });
+    // 与 getTodayFocusMinutes 保持一致：只用 studyMinutes，避免叠加 actualMinutes 造成重复计数
+    const min = (d.studyMinutes || 0);
     totalMinutes += min;
     if ((d.pomodoros || 0) > 0 || min > 0) activeDays++;
   });
@@ -3395,6 +3436,18 @@ function bindEvents() {
       const state = loadState();
       const day = ensureDay(state, todayStr());
       day.reflection[reflectMap[id]] = e.target.value;
+      saveState(state);
+    });
+  });
+
+  // 碎碎念（心事/不开心/小情绪/励志句子，分板块写入 day.murmurs）
+  MURMURS_FIELDS.forEach(function (f) {
+    const el = document.getElementById(f.id);
+    if (!el) return;
+    el.addEventListener('input', function (e) {
+      const state = loadState();
+      const day = ensureDay(state, todayStr());
+      day.murmurs[f.key] = e.target.value;
       saveState(state);
     });
   });

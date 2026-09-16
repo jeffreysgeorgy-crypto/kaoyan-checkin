@@ -837,6 +837,19 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .card-mistakes { background: #fff; }
 .card-tasks { background: #fff5f8; }
 .card-reflect-history { background: #fbf6e8; }
+.card-murmurs { background: #fde7ef; }
+.card-murmurs-history { background: #fce4ec; }
+
+/* 碎碎念：4 板块网格（桌面端 2 列，手机端 1 列） */
+.murmurs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.murmurs-field { margin-bottom: 0; }
+@media (max-width: 640px) {
+  .murmurs-grid { grid-template-columns: 1fr; }
+}
 
 /* 历史反思列表 */
 .rh-item {

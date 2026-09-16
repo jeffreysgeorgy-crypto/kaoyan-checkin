@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="考研打卡">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=20260916i">
+<link rel="stylesheet" href="style.css?v=20260916j">
 </head>
 <body>
 
@@ -181,7 +181,41 @@
     </section>
   </section>
 
-  <!-- ========== 工作台 6：统计（Stats） ========== -->
+  <!-- ========== 工作台 6：碎碎念（Murmurs） ========== -->
+  <section class="tab-panel" id="panel-murmurs">
+
+    <section class="card card-murmurs">
+      <h2 class="card-title">💭 碎碎念</h2>
+      <p class="hint">分板块记下今天的心事、不开心、小情绪和励志句子，给心情一个出口。</p>
+      <div class="murmurs-grid">
+        <div class="field murmurs-field">
+          <label for="murmurConcerns">💔 心事</label>
+          <textarea id="murmurConcerns" rows="3" placeholder="今天有什么心事？"></textarea>
+        </div>
+        <div class="field murmurs-field">
+          <label for="murmurUnhappy">😢 不开心的事</label>
+          <textarea id="murmurUnhappy" rows="3" placeholder="今天有什么不开心？"></textarea>
+        </div>
+        <div class="field murmurs-field">
+          <label for="murmurMood">🌧️ 小情绪</label>
+          <textarea id="murmurMood" rows="3" placeholder="今天的小情绪？"></textarea>
+        </div>
+        <div class="field murmurs-field">
+          <label for="murmurInspirational">✨ 励志句子</label>
+          <textarea id="murmurInspirational" rows="3" placeholder="给自己一句励志的话"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="card card-murmurs-history">
+      <h2 class="card-title">📅 历史碎碎念</h2>
+      <div id="murmursHistory"></div>
+      <p class="hint">自动展示最近 14 天内有内容的碎碎念记录，方便回顾心情轨迹。</p>
+    </section>
+
+  </section>
+
+  <!-- ========== 工作台 7：统计（Stats） ========== -->
   <section class="tab-panel" id="panel-stats">
 
     <!-- 考研进度：常驻顶部 -->
@@ -335,6 +369,7 @@
   <button class="tab" data-tab="schedule"><span>📅</span>课表</button>
   <button class="tab" data-tab="mistakes"><span>📚</span>错题</button>
   <button class="tab" data-tab="reflection"><span>📝</span>反思</button>
+  <button class="tab" data-tab="murmurs"><span>💭</span>碎碎念</button>
   <button class="tab" data-tab="stats"><span>📊</span>统计</button>
   <button class="tab" data-tab="me"><span>⚙️</span>我的</button>
   <button class="tab" data-tab="focus"><span>🍅</span>专注</button>
@@ -354,8 +389,8 @@
 <!-- 战报渲染目标（离屏，供 html2canvas 截图） -->
 <div id="reportRoot" class="report-root"></div>
 
-<script src="data.js?v=20260916i"></script>
-<script src="app.js?v=20260916i"></script>
+<script src="data.js?v=20260916j"></script>
+<script src="app.js?v=20260916j"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(function (err) {
