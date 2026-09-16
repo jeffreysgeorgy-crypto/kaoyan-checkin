@@ -657,7 +657,7 @@ const SUBJECT_TABS = [
   { key: 'all',   label: '全部' },
   { key: 'math',  label: '数学' },
   { key: 'ds',    label: '数据结构' },
-  { key: 'cs',    label: '计算机组成原理' },
+  { key: 'cs',    label: '计组' },
   { key: 'eng',   label: '英语' },
   { key: 'other', label: '其他' },
 ];
@@ -999,7 +999,7 @@ function nowTime() {
 }
 
 /* ---------- 科目标签 ---------- */
-const SUBJECT_LABELS = { math: '数学', ds: '数据结构', cs: '计组', eng: '英语', cet6: '六级', other: '竞赛/AI' };
+const SUBJECT_LABELS = { math: '数学', ds: '数据结构', cs: '计组', eng: '英语', cet6: '英语', other: '其他' };
 
 /* ---------- 时间段解析：从 "08:30–11:30；20:30–21:00错题" 提取第一个时间段 ---------- */
 function parseTimeRange(timeStr) {
@@ -2352,8 +2352,8 @@ function renderChart(state) {
       data: {
         labels: labels,
         datasets: [
-          { label: '数学', data: mathData, backgroundColor: '#5b7fd0', borderRadius: 6 },
-          { label: '408', data: csData, backgroundColor: '#4c9f6b', borderRadius: 6 },
+          { label: '数学', data: mathData, backgroundColor: '#f48fb1', borderRadius: 6 },
+          { label: '408', data: csData, backgroundColor: '#ce93d8', borderRadius: 6 },
         ],
       },
       options: {
@@ -2390,18 +2390,20 @@ function getWeekRange() {
 
 function computeWeekStats(state) {
   const days = getWeekRange();
-  let pomos = 0, words = 0, probs = 0, done = 0, total = 0;
+  let pomos = 0, words = 0, probs = 0, done = 0, total = 0, focusMin = 0;
   days.forEach(function (d) {
     const day = state.days && state.days[d];
     if (!day) return;
     pomos += day.pomodoros || 0;
+    // 专注时长直接累加 day.studyMinutes（与 getTodayFocusMinutes 口径一致），不再用 pomos * 默认时长 估算
+    focusMin += day.studyMinutes || 0;
     words += (day.words && day.words.newCount) || 0;
     probs += ((day.problems && day.problems.math) || 0) + ((day.problems && day.problems.cs) || 0);
     const items = getDayItems(state, d);
     total += items.length;
     done += items.filter(function (i) { return i.done; }).length;
   });
-  return { focusMin: pomos * POMO_FOCUS_MIN, words: words, probs: probs, rate: total ? Math.round(done / total * 100) : 0, days: days };
+  return { focusMin: focusMin, pomos: pomos, words: words, probs: probs, rate: total ? Math.round(done / total * 100) : 0, days: days };
 }
 
 function buildReportHTML(stats) {
@@ -2943,14 +2945,16 @@ function collectFocusEntries(state, range) {
   });
   return all.sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
 }
-/* 同名事项合并；按时长降序，最多保留 9 项，其余并入"其他" */
+/* 同名事项合并；按时长降序，最多保留 9 项，其余并入"其他"
+   每组保留首个非空 subject，供饼图扇区显示科目名（数学/数据结构/英语…） */
 function aggregateFocus(entries) {
   const map = {};
   entries.forEach(function (x) {
     const name = x.name || '自由专注';
-    if (!map[name]) map[name] = { name: name, minutes: 0, count: 0 };
+    if (!map[name]) map[name] = { name: name, minutes: 0, count: 0, subject: '' };
     map[name].minutes += (x.minutes || 0);
     map[name].count += 1;
+    if (!map[name].subject && x.subject) map[name].subject = x.subject;
   });
   const arr = Object.keys(map).map(function (k) { return map[k]; })
     .filter(function (x) { return x.minutes > 0; })
@@ -2962,6 +2966,7 @@ function aggregateFocus(entries) {
     name: '其他',
     minutes: rest.reduce(function (s, x) { return s + x.minutes; }, 0),
     count: rest.reduce(function (s, x) { return s + x.count; }, 0),
+    subject: '',
   });
   return top;
 }
@@ -3002,7 +3007,7 @@ function renderFocusPie(entries) {
     fallback.hidden = true;
     fallback.innerHTML = '';
     canvas.style.display = '';
-    // 内联插件：在饼图扇区上绘制"名称 + 时长"
+    // 内联插件：在饼图扇区上绘制"科目名 + 时长"（图例 below 仍显示完整任务名）
     const pieLabelPlugin = {
       id: 'focusPieLabels',
       afterDatasetsDraw: function (chart) {
@@ -3010,7 +3015,6 @@ function renderFocusPie(entries) {
         const meta = chart.getDatasetMeta(0);
         if (!meta || !meta.data || !meta.data.length) return;
         const arr = chart.data.datasets[0].data || [];
-        const labels = chart.data.labels || [];
         ctx.save();
         meta.data.forEach(function (arc, i) {
           const value = arr[i] || 0;
@@ -3024,15 +3028,17 @@ function renderFocusPie(entries) {
           const r = (outerR + innerR) / 2;
           const tx = arc.x + Math.cos(midAngle) * r;
           const ty = arc.y + Math.sin(midAngle) * r;
-          // 名称（超过 6 字截断）
-          const rawName = labels[i] || '';
-          const nameStr = rawName.length > 6 ? rawName.slice(0, 6) + '…' : rawName;
+          // 扇区上只显示科目名（数学/数据结构/英语/计组/其他）；科目为空时退回到任务名（去"（手动补录）"后缀）
+          const aggItem = agg[i] || {};
+          const subjLabel = (aggItem.subject && SUBJECT_LABELS[aggItem.subject]) ? SUBJECT_LABELS[aggItem.subject] : '';
+          const cleanName = (aggItem.name || '').replace(/（手动补录）$/, '').trim();
+          const sectorLabel = subjLabel || cleanName || '自由专注';
           const durStr = fmtMinutes(value);
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.font = '600 11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
           ctx.fillStyle = '#5a3a45';
-          ctx.fillText(nameStr, tx, ty - 7);
+          ctx.fillText(sectorLabel, tx, ty - 7);
           ctx.font = '700 11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
           ctx.fillStyle = '#7d3a52';
           ctx.fillText(durStr, tx, ty + 7);
@@ -3114,17 +3120,24 @@ function renderFocusLog(state) {
   } else {
     // 最近的记录排最前
     const list = entries.slice().reverse();
+    // 今天 pendingPool 里的任务都是昨日未完成、滚入今天的拖延任务；专注记录若命中即标"🐢 拖延"
+    const todayPending = (state.days && state.days[todayStr()] && state.days[todayStr()].pendingPool) || [];
+    const pendingNames = new Set();
+    todayPending.forEach(function (p) { if (p && p.name) pendingNames.add(p.name); });
     html += '<div class="focuslog-list">' + list.map(function (x) {
       // 专注记录不展示任务全名：优先用科目名（英语/数据结构/数学…），科目为空时退回到去掉"（手动补录）"后缀的任务名，最后兜底"自由专注"
       const subjLabel = (x.subject && SUBJECT_LABELS[x.subject]) ? SUBJECT_LABELS[x.subject] : '';
       const cleanName = (x.name || '').replace(/（手动补录）$/, '').trim();
       const displayName = subjLabel || cleanName || '自由专注';
+      // 命中今日待办池 → 标记拖延
+      const isProc = pendingNames.has(cleanName);
+      const procTag = isProc ? '<span class="focuslog-procrast">🐢 拖延</span>' : '';
       // 周/月范围下在时间列前补充日期
       const datePrefix = focusRange === 'today' ? '' : (toStr(new Date(x.ts)).slice(5) + '<br>');
-      return '<div class="focuslog-item">' +
+      return '<div class="focuslog-item' + (isProc ? ' is-procrast' : '') + '">' +
         '<div class="focuslog-time">' + datePrefix + x.start + '<br>- ' + x.end + '</div>' +
         '<div class="focuslog-body">' +
-          '<div class="focuslog-name">' + escapeHtml(displayName) + '</div>' +
+          '<div class="focuslog-name">' + procTag + escapeHtml(displayName) + '</div>' +
           '<div class="focuslog-dur">🍅 专注 ' + x.minutes + ' 分钟</div>' +
         '</div>' +
       '</div>';
@@ -3338,6 +3351,52 @@ function switchStatsTab(name) {
   // 图表在隐藏容器中渲染会尺寸错误，切换到刷题量时重绘
   if (name === 'problems') {
     setTimeout(function () { renderChart(loadState()); }, 50);
+  } else if (name === 'time') {
+    setTimeout(function () { renderStudyChart(loadState()); }, 50);
+  }
+}
+
+/* ---------- 渲染：近 7 天学习时长柱状图（取 day.studyMinutes，浅色偏粉） ---------- */
+var studyChartInstance = null;
+function renderStudyChart(state) {
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push(addDays(todayStr(), -i));
+  const labels = days.map(function (d) { return d.slice(5); }); // MM-DD
+  const data = days.map(function (d) { return (state.days && state.days[d] && state.days[d].studyMinutes) || 0; });
+
+  const canvas = document.getElementById('studyChart');
+  const fallback = document.getElementById('studyChartFallback');
+  if (!canvas || !fallback) return;
+
+  if (window.Chart) {
+    fallback.innerHTML = '';
+    fallback.style.display = 'none';
+    canvas.style.display = 'block';
+    if (studyChartInstance) studyChartInstance.destroy();
+    studyChartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: '学习时长（分钟）', data: data, backgroundColor: '#f8bbd0', borderRadius: 6 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+      },
+    });
+  } else {
+    canvas.style.display = 'none';
+    fallback.style.display = 'block';
+    const max = Math.max(1, data.reduce(function (a, b) { return Math.max(a, b); }, 0));
+    fallback.innerHTML = days.map(function (d, i) {
+      return '<div class="fb-row"><span class="fb-label">' + labels[i] + '</span>' +
+        '<div class="fb-bars"><div class="fb-bar fb-math" style="width:' + (data[i] / max * 100) + '%"></div></div>' +
+        '<span class="fb-val">' + data[i] + ' 分</span></div>';
+    }).join('');
   }
 }
 function renderMe(state) {

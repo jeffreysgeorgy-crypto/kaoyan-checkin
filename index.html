@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>考研学习打卡</title>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#3f8f62">
+<meta name="theme-color" content="#e91e63">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="考研打卡">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=20260916j">
+<link rel="stylesheet" href="style.css?v=20260916k">
 </head>
 <body>
 
@@ -283,10 +283,15 @@
 
     <!-- 标签页 3：学习时长 -->
     <section class="stats-tab-panel" data-statstab-panel="time">
+      <section class="card card-chart">
+        <h2 class="card-title">⏱️ 近 7 天学习时长</h2>
+        <div class="chart-box"><canvas id="studyChart"></canvas></div>
+        <div id="studyChartFallback"></div>
+      </section>
       <section class="card">
-        <h2 class="card-title">⏱️ 有效学习时长</h2>
+        <h2 class="card-title">⏱️ 今日学习时长</h2>
         <div class="study-time" id="studyTime"></div>
-        <p class="hint">页面打开且可见时自动累计学习时长，每 45 分钟弹窗提醒休息 5 分钟。</p>
+        <p class="hint">专注计时器结束 / 手动补录的"有效时长"会累加到当日学习时长。</p>
       </section>
       <section class="card">
         <h2 class="card-title">🍅 番茄钟累计</h2>
@@ -389,8 +394,8 @@
 <!-- 战报渲染目标（离屏，供 html2canvas 截图） -->
 <div id="reportRoot" class="report-root"></div>
 
-<script src="data.js?v=20260916j"></script>
-<script src="app.js?v=20260916j"></script>
+<script src="data.js?v=20260916k"></script>
+<script src="app.js?v=20260916k"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(function (err) {
