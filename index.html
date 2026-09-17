@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="考研打卡">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=20260916l">
+<link rel="stylesheet" href="style.css?v=20260917p1">
 </head>
 <body>
 
@@ -177,7 +177,8 @@
     <section class="card card-reflect-history">
       <h2 class="card-title">📅 历史反思</h2>
       <div id="reflectionHistory"></div>
-      <p class="hint">自动展示最近 14 天内有内容的反思记录，方便回顾与复盘。</p>
+      <div class="rh-pager" id="reflectionPager" hidden></div>
+      <p class="hint">自动展示最近 14 天内有内容的反思记录，可翻页查看，方便回顾与复盘。</p>
     </section>
   </section>
 
@@ -210,7 +211,8 @@
     <section class="card card-murmurs-history">
       <h2 class="card-title">📅 历史碎碎念</h2>
       <div id="murmursHistory"></div>
-      <p class="hint">自动展示最近 14 天内有内容的碎碎念记录，方便回顾心情轨迹。</p>
+      <div class="rh-pager" id="murmursPager" hidden></div>
+      <p class="hint">自动展示最近 14 天内有内容的碎碎念记录，可翻页查看，方便回顾心情轨迹。</p>
     </section>
 
   </section>
@@ -394,8 +396,8 @@
 <!-- 战报渲染目标（离屏，供 html2canvas 截图） -->
 <div id="reportRoot" class="report-root"></div>
 
-<script src="data.js?v=20260916l"></script>
-<script src="app.js?v=20260916l"></script>
+<script src="data.js?v=20260917p1"></script>
+<script src="app.js?v=20260917p1"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(function (err) {

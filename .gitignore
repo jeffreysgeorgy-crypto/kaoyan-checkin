@@ -13,3 +13,8 @@ desktop.ini
 *.tmp
 *.bak
 *.log
+
+# 本地脚本与密钥（不部署）
+agent/
+.env
+*.env

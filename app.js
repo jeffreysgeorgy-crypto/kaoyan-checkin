@@ -551,9 +551,14 @@ function renderReflection(state, dateStr) {
   renderReflectionHistory(state, dateStr);
 }
 
-/* ---------- 反思页：历史反思列表 ---------- */
+/* ---------- 反思页：历史反思列表（分页） ---------- */
+const REFLECT_PAGE_SIZE = 3;
+let reflectPage = 1;
+const MURMURS_PAGE_SIZE = 3;
+let murmursPage = 1;
 function renderReflectionHistory(state, dateStr) {
   const el = document.getElementById('reflectionHistory');
+  const pager = document.getElementById('reflectionPager');
   if (!el) return;
   const days = state.days || {};
   // 收集最近 14 天内有反思内容的记录
@@ -568,9 +573,15 @@ function renderReflectionHistory(state, dateStr) {
   }
   if (records.length === 0) {
     el.innerHTML = '<p class="empty">暂无历史反思记录，坚持每天记录一点点 📝</p>';
+    if (pager) pager.hidden = true;
     return;
   }
-  el.innerHTML = records.map(function (rec) {
+  const totalPages = Math.ceil(records.length / REFLECT_PAGE_SIZE);
+  if (reflectPage > totalPages) reflectPage = totalPages;
+  if (reflectPage < 1) reflectPage = 1;
+  const start = (reflectPage - 1) * REFLECT_PAGE_SIZE;
+  const slice = records.slice(start, start + REFLECT_PAGE_SIZE);
+  el.innerHTML = slice.map(function (rec) {
     const r = rec.reflection;
     return '<div class="rh-item">' +
       '<div class="rh-date">' + formatDateCN(rec.date) + '</div>' +
@@ -579,6 +590,10 @@ function renderReflectionHistory(state, dateStr) {
       (r.tomorrow ? '<div class="rh-row"><span class="rh-tag info">明日优先</span><span class="rh-text">' + escapeHtml(r.tomorrow) + '</span></div>' : '') +
     '</div>';
   }).join('');
+  renderRhPager(pager, reflectPage, totalPages, function (p) {
+    reflectPage = p;
+    renderReflectionHistory(state, dateStr);
+  });
 }
 
 /* ---------- 渲染：碎碎念 ---------- */
@@ -598,6 +613,7 @@ function renderMurmurs(state, dateStr) {
 }
 function renderMurmursHistory(state, dateStr) {
   const el = document.getElementById('murmursHistory');
+  const pager = document.getElementById('murmursPager');
   if (!el) return;
   const days = state.days || {};
   const records = [];
@@ -611,9 +627,15 @@ function renderMurmursHistory(state, dateStr) {
   }
   if (records.length === 0) {
     el.innerHTML = '<p class="empty">暂无历史碎碎念记录，给心情一个出口吧 💭</p>';
+    if (pager) pager.hidden = true;
     return;
   }
-  el.innerHTML = records.map(function (rec) {
+  const totalPages = Math.ceil(records.length / MURMURS_PAGE_SIZE);
+  if (murmursPage > totalPages) murmursPage = totalPages;
+  if (murmursPage < 1) murmursPage = 1;
+  const start = (murmursPage - 1) * MURMURS_PAGE_SIZE;
+  const slice = records.slice(start, start + MURMURS_PAGE_SIZE);
+  el.innerHTML = slice.map(function (rec) {
     const m = rec.murmurs;
     return '<div class="rh-item">' +
       '<div class="rh-date">' + formatDateCN(rec.date) + '</div>' +
@@ -623,6 +645,27 @@ function renderMurmursHistory(state, dateStr) {
       (m.inspirational ? '<div class="rh-row"><span class="rh-tag accent">励志</span><span class="rh-text">' + escapeHtml(m.inspirational) + '</span></div>' : '') +
     '</div>';
   }).join('');
+  renderRhPager(pager, murmursPage, totalPages, function (p) {
+    murmursPage = p;
+    renderMurmursHistory(state, dateStr);
+  });
+}
+
+/* ---------- 通用：反思/碎碎念分页控件 ---------- */
+function renderRhPager(pager, page, totalPages, onJump) {
+  if (!pager) return;
+  if (totalPages <= 1) { pager.hidden = true; pager.innerHTML = ''; return; }
+  pager.hidden = false;
+  pager.innerHTML =
+    '<button class="btn btn-ghost btn-sm rh-prev" type="button"' + (page <= 1 ? ' disabled' : '') + '>‹ 上一页</button>' +
+    '<span class="rh-page-info">第 ' + page + ' / ' + totalPages + ' 页</span>' +
+    '<button class="btn btn-ghost btn-sm rh-next" type="button"' + (page >= totalPages ? ' disabled' : '') + '>下一页 ›</button>';
+  pager.querySelector('.rh-prev').addEventListener('click', function () {
+    if (page > 1) onJump(page - 1);
+  });
+  pager.querySelector('.rh-next').addEventListener('click', function () {
+    if (page < totalPages) onJump(page + 1);
+  });
 }
 
 /* ---------- 今日：单词进度小卡片 ---------- */
@@ -669,8 +712,10 @@ function matchSubjectFilter(block, filter) {
 }
 
 function collectTaskBlocks(state, dateStr) {
-  // 必须走 ensureTimeline：任务页读的是 day.timeline，只调 ensureDay 会让历史/未来日期没有 timeline 而显示空白
-  const day = ensureTimeline(state, dateStr);
+  // 必须走 ensureTimeline：任务页读的是 day.timeline，只调 ensureDay 会让历史/未来日期没有 timeline 而显示空白。
+  // 注意 ensureTimeline 返回的是 day.timeline（数组），day 对象要从 ensureDay 拿，不能直接用其返回值。
+  const day = ensureDay(state, dateStr);
+  ensureTimeline(state, dateStr);
   const list = [];
   const seen = {}; // 防御：同 id 的脏数据块只显示一次
   function add(b, isPending) {

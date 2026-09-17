@@ -874,6 +874,24 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .rh-tag.info { background: #f3e5f5; color: #7b1fa2; }
 .rh-text { flex: 1; color: #7d5c69; }
 
+/* 历史反思/碎碎念：分页控件 */
+.rh-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.rh-pager .btn:disabled { opacity: .45; cursor: not-allowed; }
+.rh-page-info {
+  font-size: .88rem;
+  color: #6a4a55;
+  font-weight: 600;
+  min-width: 90px;
+  text-align: center;
+}
+
 /* ========== 学科切换栏（分类任务清单页） ========== */
 .subject-tabs {
   display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto;
