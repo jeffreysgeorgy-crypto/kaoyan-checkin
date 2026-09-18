@@ -1480,9 +1480,12 @@ function renderReplanCard(d) {
   let html = '<div class="agent-result-card"><div class="arc-title">🔄 重新规划</div>';
   html += '<div class="arc-item">调整任务数：' + (d.adjustments ? d.adjustments.length : 0) + ' 个</div>';
   (d.adjustments || []).forEach(function (a) {
-    html += '<div class="arc-item"><b>' + escapeHtml(a.subject || a.task_id || '') + '</b>：' +
-      escapeHtml(a.before || '') + ' → ' + escapeHtml(a.after || '') + '</div>';
+    const lv = AGENT_LEVEL_LABELS[a.level] || '调整';
+    html += '<div class="arc-item"><b>' + escapeHtml(a.subject || a.task_id || '') + '</b> · ' + escapeHtml(lv) + '</div>';
+    html += '<div class="arc-item">' + escapeHtml(a.before || '') + ' → ' + escapeHtml(a.after || '') + '</div>';
+    html += renderAgentChart(a);
     html += '<div class="arc-reason">理由：' + escapeHtml(a.reason || '') + '</div>';
+    html += renderAgentEvidence(a.evidence);
   });
   return html + '</div>';
 }
