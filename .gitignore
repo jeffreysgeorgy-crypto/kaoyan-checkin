@@ -24,6 +24,7 @@ venv/
 uploads/
 new_plan.json
 schedule_last.json
+simulation_report.json
 
 # 密钥（不提交）
 .env
