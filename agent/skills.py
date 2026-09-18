@@ -585,6 +585,24 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None,
                 ),
                 "evidence": _evidence(alert),
             })
+        # 严重度 high 且连续失败恰好 4 天 → 维持上次拆分方案（hold），显式留痕而非静默
+        elif sev == "high" and fails == 4:
+            adjustments.append({
+                "task_id": task["task_id"],
+                "subject": subject,
+                "level": "hold",
+                "before": before,
+                "after": before,
+                "reason": (
+                    "连续失败 4 天仍为 high，但第 3 天刚执行『拆分 + 减时长』，"
+                    "给该方案一个观察窗口，本次不连续加码（避免计划天天变动、用户无所适从）；"
+                    "若次日仍未完成（连续 5 天），将自动升级为『降级内容难度』。"
+                ),
+                "evidence": _evidence(
+                    alert,
+                    conclusion="维持第 3 天的拆分方案观察中，下次仍失败则升级为降级",
+                ),
+            })
         # 中等预警 → 仅标红提醒，不改变计划内容
         elif sev == "medium":
             task["flag"] = "red"
