@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="考研打卡">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=20260917p1">
+<link rel="stylesheet" href="style.css?v=20260917p7">
 </head>
 <body>
 
@@ -122,6 +122,18 @@
   <!-- ========== 工作台 3：课表（Schedule） ========== -->
   <section class="tab-panel" id="panel-schedule">
 
+    <!-- 课表管理工具栏：新增课程 / 冲突检测并重排 -->
+    <section class="card card-schedule card-toolbar">
+      <h2 class="card-title">🛠️ 课表管理</h2>
+      <div class="toolbar-row">
+        <button type="button" class="btn btn-primary" id="addCourseBtn">➕ 新增课程</button>
+        <button type="button" class="btn btn-ghost" id="importScheduleBtn">📷 导入课表</button>
+        <button type="button" class="btn btn-warn" id="rescheduleBtn">🔄 检测课表冲突并重排</button>
+      </div>
+      <input type="file" id="importScheduleInput" accept="image/*" multiple hidden>
+      <p class="schedule-note" id="rescheduleResult">修改课表后点「检测冲突并重排」，Agent 会把冲突的复习任务自动挪到空档。</p>
+    </section>
+
     <!-- 星期切换栏 -->
     <section class="card card-schedule">
       <h2 class="card-title">📅 按日查看课表</h2>
@@ -173,6 +185,11 @@
         <label for="reflectTomorrow">明天优先解决的事</label>
         <textarea id="reflectTomorrow" rows="2" placeholder="明天最重要的 1-2 件事？"></textarea>
       </div>
+      <div class="reflect-actions">
+        <button type="button" class="btn btn-primary" id="analyzeReflectBtn">💬 分析反思</button>
+        <span class="hint">把今天的三段反思发给 Agent，抽取 归因 / 弱知识点 / 情绪 / 建议。</span>
+      </div>
+      <div id="feedbackResult"></div>
     </section>
     <section class="card card-reflect-history">
       <h2 class="card-title">📅 历史反思</h2>
@@ -256,6 +273,7 @@
       <button class="stats-tab" data-statstab="problems">📊 刷题量</button>
       <button class="stats-tab" data-statstab="time">⏱️ 学习时长</button>
       <button class="stats-tab" data-statstab="procrast">🐢 拖延统计</button>
+      <button class="stats-tab" data-statstab="agent">🤖 调整日志</button>
     </div>
 
     <!-- 标签页 1：单词打卡 -->
@@ -306,6 +324,15 @@
       <section class="card card-procrastination">
         <h2 class="card-title">🐢 本周拖延统计</h2>
         <div id="procrastinationStats"></div>
+      </section>
+    </section>
+
+    <!-- 标签页 5：Agent 调整日志 -->
+    <section class="stats-tab-panel" data-statstab-panel="agent">
+      <section class="card card-agent">
+        <h2 class="card-title">🤖 Agent 调整日志</h2>
+        <p class="hint">导入 Agent 建议（new_plan.json）后，这里会显示每次重规划的调整前后对比与依据。</p>
+        <div id="agentAdjustLog"></div>
       </section>
     </section>
 
@@ -363,6 +390,49 @@
         <button class="btn btn-ghost danger" id="resetBtn">清空全部数据</button>
       </div>
       <p class="hint">导出备份含 DAILY_PLAN_DATA + 打卡记录 + 错题本，可跨设备恢复。</p>
+      <p class="hint" id="exportSizeHint" hidden style="color:#c62828"></p>
+    </section>
+
+    <section class="card card-agent">
+      <h2 class="card-title">🤖 Agent 联动</h2>
+      <p class="hint">把打卡数据导出给 CLI Agent 决策，再把新计划导回来覆盖未来日程。</p>
+      <div class="data-actions">
+        <button class="btn btn-primary" id="exportAgentBtn">📤 导出 Agent 数据</button>
+        <label class="btn btn-ghost" for="importAgentFile">📥 导入 Agent 建议</label>
+        <input type="file" id="importAgentFile" accept=".json" hidden>
+      </div>
+      <p class="hint">流程：导出 memory.json → <code>py agent.py memory.json</code> 生成 new_plan.json → 导入 new_plan.json。</p>
+    </section>
+
+    <section class="card card-agent">
+      <h2 class="card-title">🔌 Agent 在线联动（FastAPI）</h2>
+      <p class="hint">无需手动搬文件：前端直连本地后端，一键把数据发给 Agent、拿到重新规划后的新计划。</p>
+      <div class="settings-group">
+        <div class="settings-label">后端地址（手机访问时填 cpolar 地址）</div>
+        <div class="settings-row">
+          <input type="text" id="backendUrlInput" placeholder="http://127.0.0.1:8000" style="flex:1;min-width:0">
+          <button class="btn btn-primary btn-sm" id="saveBackendUrlBtn">保存</button>
+        </div>
+      </div>
+      <div class="data-actions">
+        <button class="btn btn-primary" id="sendAgentBtn">📤 导出并发送 Agent</button>
+        <button class="btn btn-primary" id="replanBtn">🔄 重新规划</button>
+        <label class="btn btn-ghost" for="mistakePhotoInput">📷 上传错题照片</label>
+        <input type="file" id="mistakePhotoInput" accept="image/*" hidden>
+      </div>
+      <p class="hint" id="agentServerStatus">后端状态：未连接（请先启动 <code>py server.py</code>）</p>
+      <p class="hint">流程：① 点「导出并发送 Agent」→ ② 点「重新规划」→ ③ 在「统计 → 调整日志」查看调整理由与依据。</p>
+    </section>
+
+    <section class="card card-agent">
+      <h2 class="card-title">🧩 6 个 Skill 控制台</h2>
+      <p class="hint">每个 Skill 一个入口：学习诊断 / 重新规划 / 资源再分配 / 分析反思 / 未来负荷 / 课表重排。结果卡片化展示、写回本地，刷新不丢。</p>
+      <div class="data-actions skill-grid">
+        <button class="btn btn-primary" id="diagnoseBtn">🔍 学习诊断</button>
+        <button class="btn btn-primary" id="allocateBtn">⚖️ 资源再分配</button>
+        <button class="btn btn-primary" id="scanBtn">📊 未来 7 天负荷</button>
+      </div>
+      <div id="agentResults"><p class="hint">尚未运行任何 Skill。点上面的按钮开始（「分析反思」在反思页，「课表重排」在课表页）。</p></div>
     </section>
 
   </section>
@@ -396,8 +466,8 @@
 <!-- 战报渲染目标（离屏，供 html2canvas 截图） -->
 <div id="reportRoot" class="report-root"></div>
 
-<script src="data.js?v=20260917p1"></script>
-<script src="app.js?v=20260917p1"></script>
+<script src="data.js?v=20260917p7"></script>
+<script src="app.js?v=20260917p7"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(function (err) {

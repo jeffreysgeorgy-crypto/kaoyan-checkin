@@ -14,7 +14,17 @@ desktop.ini
 *.bak
 *.log
 
-# 本地脚本与密钥（不部署）
-agent/
+# Python 缓存 / 虚拟环境
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 运行时产物（本地运行生成，不部署）
+uploads/
+new_plan.json
+schedule_last.json
+
+# 密钥（不提交）
 .env
 *.env

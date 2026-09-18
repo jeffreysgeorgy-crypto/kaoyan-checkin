@@ -84,6 +84,13 @@ function saveState(state) {
     localStorage.setItem(STORE_KEY, JSON.stringify(state));
   } catch (e) { console.warn('保存失败', e); }
 }
+// 带返回值版：写入成功 true / 容量超限等失败 false（供图片写入时判断）
+function saveStateChecked(state) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    return true;
+  } catch (e) { return false; }
+}
 // 旧版把“背单词”作为复选框任务；新版改为独立单词块，这里清掉旧任务
 function migrateState(state) {
   state.days = state.days || {};
@@ -159,12 +166,51 @@ function dedupeBlocks(blocks) {
   return Array.from(map.values());
 }
 
+/* ---------- 可编辑课表（localStorage，带 version） ---------- */
+// 首次运行从 data.js 硬编码 SCHEDULE 初始化；之后所有编辑都落在 localStorage 的 state.schedule。
+// 每条 entry 同时保留前端渲染字段（period/name/teacher/location）与后端 Skill 字段（day_of_week/time/weeks）。
+function weekdayIndexOf(name) { return WEEKDAY_NAMES.indexOf(name); }
+function getScheduleStore(state) {
+  state = state || loadState();
+  if (state.schedule && Array.isArray(state.schedule.entries)) return state.schedule;
+  const entries = [];
+  for (let wd = 1; wd <= 5; wd++) {
+    (SCHEDULE[wd] || []).forEach(function (c) {
+      const p = PERIODS.find(function (x) { return x.period === c.period; });
+      entries.push({
+        id: 'c' + (entries.length + 1),
+        day_of_week: WEEKDAY_NAMES[wd],
+        period: c.period,
+        time: p ? (p.start + '-' + p.end) : '',
+        name: c.name,
+        teacher: c.teacher || '',
+        weeks: c.weeks,
+        location: c.location || '',
+      });
+    });
+  }
+  const schedule = { version: 1, last_updated: todayStr(), entries: entries };
+  state.schedule = schedule;
+  saveState(state);
+  return schedule;
+}
+function getScheduleByWeekday(wd) {
+  return getScheduleStore().entries.filter(function (e) { return weekdayIndexOf(e.day_of_week) === wd; });
+}
+function bumpScheduleVersion(store) {
+  store.version = (store.version || 0) + 1;   // 每次修改 +1，后端据此判断课表变了
+  store.last_updated = todayStr();
+}
+function findScheduleEntry(id) {
+  return getScheduleStore().entries.find(function (e) { return e.id === id; });
+}
+
 /* ---------- 今日课表 ---------- */
 function getTodayCourses(dateStr) {
   const wd = getWeekday(dateStr);
   if (wd > 5 || isHoliday(dateStr)) return [];
   const week = getWeekNumber(dateStr);
-  const list = SCHEDULE[wd] || [];
+  const list = getScheduleByWeekday(wd);
   return list
     .filter(function (c) { return parseWeeks(c.weeks).has(week); })
     .sort(function (a, b) { return a.period - b.period; });
@@ -180,10 +226,21 @@ function cn2num(str) {
   return 0;
 }
 
-/* ---------- 从 DAILY_PLAN_DATA 查找某天计划 ---------- */
+/* ---------- 从 DAILY_PLAN_DATA 查找某天计划（Agent 导入的计划优先覆盖） ---------- */
 function getPlanForDate(dateStr) {
-  if (typeof DAILY_PLAN_DATA === 'undefined') return null;
-  return DAILY_PLAN_DATA.find(function (d) { return d.date === dateStr; }) || null;
+  const state = loadState();
+  const override = state.agentPlan && state.agentPlan[dateStr];
+  const base = (typeof DAILY_PLAN_DATA !== 'undefined')
+    ? DAILY_PLAN_DATA.find(function (d) { return d.date === dateStr; }) : null;
+  if (!override && !base) return null;
+  const merged = base ? Object.assign({}, base) : { date: dateStr };
+  if (override) {
+    if (override.math) { merged.mathTime = override.math.time; merged.mathContent = override.math.content; }
+    if (override.ds)   { merged.dsTime = override.ds.time;     merged.dsContent = override.ds.content; }
+    if (override.cs)   { merged.csTime = override.cs.time;     merged.csContent = override.cs.content; }
+    if (override.english) { merged.englishTime = override.english.time; merged.englishContent = override.english.content; }
+  }
+  return merged;
 }
 
 /* ---------- 数学一轮总进度（优先读取用户设置，回退到计划推算） ---------- */
@@ -922,7 +979,7 @@ function renderFixedSchedule() {
 
   // 只渲染选中那一天的固定课程
   const wd = selectedFixedWeekday;
-  const list = (SCHEDULE[wd] || []).slice().sort(function (a, b) { return a.period - b.period; });
+  const list = getScheduleByWeekday(wd).slice().sort(function (a, b) { return a.period - b.period; });
   html += '<div class="fs-list"><div class="fs-list-head">' + WEEKDAY_NAMES[wd] + '固定课程 · 共 ' + list.length + ' 门</div>';
   if (!list.length) {
     html += '<p class="empty">' + WEEKDAY_NAMES[wd] + '无课 🎉</p>';
@@ -935,11 +992,652 @@ function renderFixedSchedule() {
         '<div class="fs-info"><div class="fs-name">' + escapeHtml(c.name) + '</div>' +
           '<div class="fs-meta">' + escapeHtml(c.teacher || '') + ' · 第' + c.weeks + '周' + (c.location ? ' · ' + escapeHtml(c.location) : '') + '</div>' +
         '</div>' +
+        '<button type="button" class="btn btn-ghost btn-sm fs-edit" data-editcourse="' + c.id + '">✏️ 编辑</button>' +
       '</div>';
     });
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+/* ---------- 课表编辑：新增 / 修改 / 删除课程 ---------- */
+let editingCourseId = null;
+
+function openCourseForm(mode, entryId) {
+  const entry = entryId ? findScheduleEntry(entryId) : null;
+  editingCourseId = entry ? entry.id : null;
+
+  const weekdayOpts = WEEKDAY_NAMES.slice(1, 6).map(function (name) {
+    return '<option value="' + name + '"' + (entry && entry.day_of_week === name ? ' selected' : '') + '>' + name + '</option>';
+  }).join('');
+  const periodOpts = PERIODS.map(function (p) {
+    return '<option value="' + p.period + '"' + (entry && entry.period === p.period ? ' selected' : '') + '>' + p.name + '（' + p.start + '-' + p.end + '）</option>';
+  }).join('');
+
+  const timeVal = entry ? (entry.time || '') : (PERIODS[0].start + '-' + PERIODS[0].end);
+
+  document.getElementById('modalContent').innerHTML =
+    '<h3>' + (entry ? '✏️ 编辑课程' : '➕ 新增课程') + '</h3>' +
+    '<div class="edit-form">' +
+      '<label>星期</label><select id="cfWeekday">' + weekdayOpts + '</select>' +
+      '<label>节次</label><select id="cfPeriod">' + periodOpts + '</select>' +
+      '<label>时间（HH:MM-HH:MM）</label><input id="cfTime" placeholder="如 14:30-16:10" value="' + escapeHtml(timeVal) + '">' +
+      '<label>课程名</label><input id="cfName" placeholder="课程名" value="' + escapeHtml(entry ? entry.name : '') + '">' +
+      '<label>教室（可空）</label><input id="cfLocation" placeholder="教室" value="' + escapeHtml(entry ? (entry.location || '') : '') + '">' +
+      '<label>周次（如 1-16 / 3,5,7,9）</label><input id="cfWeeks" placeholder="1-16" value="' + escapeHtml(entry ? entry.weeks : '1-16') + '">' +
+    '</div>' +
+    '<div class="modal-actions">' +
+      (entry ? '<button class="btn danger" onclick="deleteCourseEntry()">🗑 删除</button>' : '') +
+      '<button class="btn btn-primary" onclick="saveCourseForm()">保存</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+    '</div>';
+  openModal();
+
+  // 节次变化时，自动把「时间」同步为该大节起止时间（用户仍可手改）
+  document.getElementById('cfPeriod').addEventListener('change', function () {
+    const p = PERIODS.find(function (x) { return x.period === parseInt(this.value, 10); });
+    if (p) document.getElementById('cfTime').value = p.start + '-' + p.end;
+  });
+}
+
+function saveCourseForm() {
+  const name = document.getElementById('cfName').value.trim();
+  const wdName = document.getElementById('cfWeekday').value;
+  const period = parseInt(document.getElementById('cfPeriod').value, 10);
+  const time = document.getElementById('cfTime').value.trim();
+  const location = document.getElementById('cfLocation').value.trim();
+  const weeks = document.getElementById('cfWeeks').value.trim();
+  if (!name) { alert('课程名不能为空'); return; }
+  if (!weeks) { alert('周次不能为空，例如 1-16'); return; }
+  if (!/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/.test(time)) { alert('时间格式应为 HH:MM-HH:MM，例如 14:30-16:10'); return; }
+
+  const state = loadState();
+  const store = getScheduleStore(state);
+  if (editingCourseId) {
+    const entry = store.entries.find(function (e) { return e.id === editingCourseId; });
+    if (entry) {
+      entry.day_of_week = wdName;
+      entry.period = period;
+      entry.time = time;
+      entry.name = name;
+      entry.location = location;
+      entry.weeks = weeks;
+    }
+  } else {
+    store.entries.push({
+      id: 'c' + Date.now(),
+      day_of_week: wdName,
+      period: period,
+      time: time,
+      name: name,
+      teacher: '',
+      weeks: weeks,
+      location: location,
+    });
+  }
+  bumpScheduleVersion(store);
+  saveState(state);
+  closeModal();
+  renderDayCourses();
+  renderScheduleGrid(loadState());
+  renderFixedSchedule();
+  alert('✅ 已保存（课表 version = ' + store.version + '）');
+}
+
+function deleteCourseEntry() {
+  if (!editingCourseId) return;
+  if (!confirm('确定删除这门课吗？')) return;
+  const state = loadState();
+  const store = getScheduleStore(state);
+  store.entries = store.entries.filter(function (e) { return e.id !== editingCourseId; });
+  bumpScheduleVersion(store);
+  saveState(state);
+  closeModal();
+  renderDayCourses();
+  renderScheduleGrid(loadState());
+  renderFixedSchedule();
+  alert('✅ 已删除（课表 version = ' + store.version + '）');
+}
+
+/* ---------- 课表重排：发送新课表 + 当前计划给后端 /api/reschedule ---------- */
+function buildSchedulePayload() {
+  const store = getScheduleStore();
+  return {
+    version: store.version,
+    last_updated: store.last_updated,
+    entries: store.entries.map(function (e) {
+      return { day_of_week: e.day_of_week, time: e.time, course: e.name, weeks: e.weeks };
+    }),
+  };
+}
+
+// 把「今天或最近未来」的计划转成 Agent 任务格式（补齐 day_of_week / weeks，供 Skill 做冲突检测）
+function buildReschedulePlan(state) {
+  const today = todayStr();
+  const planDate = findPlanDate(today);
+  const plan = getPlanForDate(planDate);
+  const tasks = [];
+  if (!plan) return { date: planDate, tasks: tasks };
+  const wd = getWeekday(planDate);
+  const dayName = WEEKDAY_NAMES[wd] || '';
+  const week = getWeekNumber(planDate);
+  AGENT_SUBJECT_MAP.forEach(function (m) {
+    const t = plan[m.timeCol];
+    const c = plan[m.contentCol];
+    if (!t || t === '—' || /暂停/.test(t) || !c || c === '—') return;
+    // 同一科目可能有多段时段（如 10:10-11:40；11:50-12:40），拆成多个 task 以正确解析
+    const segs = String(t).split(/[；;]/).map(function (s) { return s.trim(); }).filter(function (s) {
+      return /^\d{1,2}:\d{2}\s*[-–—]\s*\d{1,2}:\d{2}$/.test(s);
+    });
+    const segList = segs.length ? segs : [t];
+    segList.forEach(function (seg, i) {
+      const range = seg.replace(/[–—]/g, '-').replace(/\s+/g, '');
+      tasks.push({
+        task_id: m.key + '_1' + (i === 0 ? '' : ('b' + i)),
+        subject: m.label,
+        content: c,
+        planned_hours: hoursFromTime(seg),
+        scheduled_slots: [range],
+        day_of_week: dayName,
+        weeks: String(week),
+        priority: m.priority,
+        depends_on: [],
+      });
+    });
+  });
+  return { date: planDate, tasks: tasks };
+}
+
+// 把重排后的时段写回 localStorage（agentPlan 覆盖层），保留原内容不变
+function applyRescheduleToState(newPlan, planDate) {
+  const tasks = (newPlan && newPlan.tasks) || [];
+  if (!tasks.length) return;
+  const state = loadState();
+  const base = getPlanForDate(planDate);
+  const bySubject = {};
+  tasks.forEach(function (t) {
+    const m = AGENT_SUBJECT_MAP.filter(function (x) { return x.label === t.subject || x.key === t.subject; })[0];
+    if (!m) return;
+    const slot = (t.scheduled_slots && t.scheduled_slots[0]) || t.time || '';
+    if (!slot) return;
+    (bySubject[m.key] = bySubject[m.key] || []).push(slot);
+  });
+  state.agentPlan = state.agentPlan || {};
+  const override = state.agentPlan[planDate] || {};
+  Object.keys(bySubject).forEach(function (key) {
+    const m = AGENT_SUBJECT_MAP.filter(function (x) { return x.key === key; })[0];
+    // getPlanForDate 读的覆盖键是 math/ds/cs/english；AGENT_SUBJECT_MAP 里英语键为 eng，需对齐
+    const ovKey = key === 'eng' ? 'english' : key;
+    override[ovKey] = {
+      time: bySubject[key].join('；'),
+      content: (override[ovKey] && override[ovKey].content) || (base && m ? base[m.contentCol] : ''),
+    };
+  });
+  state.agentPlan[planDate] = override;
+  saveState(state);
+}
+
+async function doReschedule() {
+  const resultEl = document.getElementById('rescheduleResult');
+  const btn = document.getElementById('rescheduleBtn');
+  const state = loadState();
+  const schedule = buildSchedulePayload();
+  const plan = buildReschedulePlan(state);
+  if (!plan.tasks.length) {
+    if (resultEl) { resultEl.textContent = '当前日期附近没有可重排的学习任务（计划为空）。'; resultEl.classList.remove('error'); }
+    return;
+  }
+  setBtnLoading(btn, true);
+  if (resultEl) { resultEl.textContent = '⏳ 正在检测课表冲突并重排…'; resultEl.classList.remove('error'); }
+  try {
+    const res = await fetch(BACKEND_URL + '/api/reschedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule: schedule, current_plan: { tasks: plan.tasks } }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '重排失败');
+    if (data.triggered !== false) {
+      applyRescheduleToState(data.new_plan, plan.date);
+      renderDayCourses();
+      renderScheduleGrid(loadState());
+      renderFixedSchedule();
+    }
+    const lines = (data.explanation && data.explanation.length) ? data.explanation : data.reason;
+    const msg = (data.triggered === false)
+      ? '课表 version 未变化，无需重排。'
+      : ('✅ 计划已重排：' + (Array.isArray(lines) ? lines.join('；') : lines));
+    if (resultEl) { resultEl.textContent = msg; resultEl.classList.remove('error'); }
+  } catch (err) {
+    const msg = (err && err.name === 'TypeError')
+      ? '后端未启动：请先在 agent 目录运行 py server.py'
+      : ('重排失败：' + (err && err.message ? err.message : err));
+    if (resultEl) { resultEl.textContent = '❌ ' + msg; resultEl.classList.add('error'); }
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
+/* ---------- 课表图片导入：压缩 → base64 → POST /api/parse_schedule → 可编辑 → 导入 ---------- */
+let importEntries = [];   // 当前识别结果（供编辑/确认导入）
+
+function fileToCompressedDataUrl(file, cb) {
+  const reader = new FileReader();
+  reader.onload = function () {
+    const img = new Image();
+    img.onload = function () {
+      const canvas = document.createElement('canvas');
+      const maxW = 1200, maxH = 1200;
+      let w = img.width, h = img.height;
+      if (w > maxW) { h = h * maxW / w; w = maxW; }
+      if (h > maxH) { w = w * maxH / h; h = maxH; }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      cb(canvas.toDataURL('image/jpeg', 0.8));   // 压缩到 80% 质量，保留课表文字可读
+    };
+    img.onerror = function () { cb(null); };
+    img.src = reader.result;
+  };
+  reader.onerror = function () { cb(null); };
+  reader.readAsDataURL(file);
+}
+
+async function handleImportScheduleFiles(fileList) {
+  const files = Array.prototype.slice.call(fileList || []);
+  if (!files.length) return;
+  const resultEl = document.getElementById('rescheduleResult');
+  const images = [];
+  for (let i = 0; i < files.length; i++) {
+    await new Promise(function (resolve) {
+      fileToCompressedDataUrl(files[i], function (dataUrl) {
+        if (dataUrl) images.push(dataUrl);
+        resolve();
+      });
+    });
+  }
+  if (!images.length) { alert('图片读取失败，请重试'); return; }
+  if (resultEl) resultEl.textContent = '正在识别 ' + images.length + ' 张课表图片…';
+  try {
+    const res = await fetch(BACKEND_URL + '/api/parse_schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: images }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '识别失败');
+    if (resultEl) resultEl.textContent = '识别完成：' + (data.entries ? data.entries.length : 0) + ' 门课，请核对后导入。';
+    renderImportModal(data.entries || []);
+  } catch (err) {
+    const msg = (err && err.name === 'TypeError')
+      ? '后端未启动：请先在 agent 目录运行 py server.py'
+      : ('识别失败：' + (err && err.message ? err.message : err));
+    if (resultEl) resultEl.textContent = msg + '（已降级为手动录入）';
+    alert('⚠️ ' + msg + '\n已降级为手动录入。');
+    openCourseForm('add');
+  }
+}
+
+function renderImportModal(entries) {
+  importEntries = entries || [];
+  if (!importEntries.length) {
+    document.getElementById('modalContent').innerHTML =
+      '<h3>📷 导入课表</h3>' +
+      '<p class="empty">未识别到课程条目，请换一张更清晰的课表图片，或改用手动录入。</p>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-primary" onclick="closeModal();openCourseForm(\'add\');">手动录入</button>' +
+        '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+      '</div>';
+    openModal();
+    return;
+  }
+  const rows = importEntries.map(function (e, i) {
+    const weekdayOpts = WEEKDAY_NAMES.slice(1, 6).map(function (n) {
+      return '<option value="' + n + '"' + (e.day_of_week === n ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+    const periodOpts = PERIODS.map(function (p) {
+      return '<option value="' + p.period + '"' + (e.period === p.period ? ' selected' : '') + '>' + p.name + '</option>';
+    }).join('');
+    return '<div class="imp-row">' +
+      '<div class="imp-row-title">第 ' + (i + 1) + ' 门' +
+        '<button type="button" class="btn btn-ghost btn-sm imp-del" onclick="removeImportRow(' + i + ')">✕</button></div>' +
+      '<div class="imp-grid">' +
+        '<label>星期</label><select class="imp-day">' + weekdayOpts + '</select>' +
+        '<label>节次</label><select class="imp-period">' + periodOpts + '</select>' +
+        '<label>时间</label><input class="imp-time" value="' + escapeHtml(e.time || '') + '">' +
+        '<label>课程名</label><input class="imp-course" value="' + escapeHtml(e.course || '') + '">' +
+        '<label>教室</label><input class="imp-location" value="' + escapeHtml(e.location || '') + '">' +
+        '<label>周次</label><input class="imp-weeks" value="' + escapeHtml(e.weeks || '1-16') + '">' +
+      '</div>' +
+    '</div>';
+  }).join('');
+  document.getElementById('modalContent').innerHTML =
+    '<h3>📷 识别到 ' + importEntries.length + ' 门课（可编辑后导入）</h3>' +
+    rows +
+    '<div class="modal-actions">' +
+      '<button class="btn btn-primary" onclick="confirmImportSchedule()">导入课表</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal()">取消</button>' +
+    '</div>';
+  openModal();
+}
+
+function removeImportRow(i) {
+  // 直接删 DOM 行，保留其它行已编辑的内容（confirmImportSchedule 读的是 DOM 输入框）
+  const rows = document.querySelectorAll('#modalContent .imp-row');
+  if (rows[i]) rows[i].remove();
+}
+
+function confirmImportSchedule() {
+  const state = loadState();
+  const store = getScheduleStore(state);
+  const rows = document.querySelectorAll('#modalContent .imp-row');
+  let added = 0;
+  rows.forEach(function (row) {
+    const name = row.querySelector('.imp-course').value.trim();
+    if (!name) return;
+    const time = row.querySelector('.imp-time').value.trim();
+    if (!/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/.test(time)) { alert('第 ' + (added + 1) + ' 门课时间格式错误，应为 HH:MM-HH:MM'); return; }
+    const wd = row.querySelector('.imp-day').value;
+    const period = parseInt(row.querySelector('.imp-period').value, 10);
+    const location = row.querySelector('.imp-location').value.trim();
+    const weeks = row.querySelector('.imp-weeks').value.trim() || '1-16';
+    store.entries.push({
+      id: 'c' + Date.now() + '_' + added,
+      day_of_week: wd, period: period, time: time,
+      name: name, teacher: '', weeks: weeks, location: location,
+    });
+    added++;
+  });
+  if (!added) { alert('没有可导入的课程（课程名不能为空）'); return; }
+  bumpScheduleVersion(store);
+  saveState(state);
+  closeModal();
+  renderDayCourses();
+  renderScheduleGrid(loadState());
+  renderFixedSchedule();
+  alert('✅ 已导入 ' + added + ' 门课（课表 version = ' + store.version + '）');
+}
+
+/* ---------- 6 个 Skill 前端入口：loading / 结果卡片 / localStorage 持久化 ---------- */
+const AGENT_RESULT_ORDER = ['diagnose', 'replan', 'allocate', 'scan'];  // 卡片展示顺序（feedback 在反思页、reschedule 在课表页）
+
+function setBtnLoading(btn, loading) {
+  if (!btn) return;
+  if (loading) {
+    btn.dataset.origText = btn.textContent;
+    btn.textContent = '⏳ 处理中…';
+    btn.disabled = true;
+  } else {
+    btn.textContent = btn.dataset.origText || btn.textContent;
+    btn.disabled = false;
+  }
+}
+
+function saveAgentResult(key, data) {
+  const state = loadState();
+  state.agentResults = state.agentResults || {};
+  state.agentResults[key] = data;
+  saveState(state);
+}
+
+function getAgentResults() {
+  return (loadState().agentResults) || {};
+}
+
+function agentErrMsg(err) {
+  if (err && err.name === 'TypeError') {
+    return '后端未连接，请检查：①后端是否启动 ②后端地址是否填写正确 ③cpolar 隧道是否还在运行';
+  }
+  return (err && err.message ? err.message : String(err));
+}
+
+function agentErrorCard(msg) {
+  return '<div class="agent-result-card error">❌ ' + escapeHtml(msg) + '</div>';
+}
+
+function flashAgentError(msg) {
+  setAgentServerStatus('错误：' + msg, 'error');
+  const el = document.getElementById('agentResults');
+  if (el) el.innerHTML = agentErrorCard(msg) + el.innerHTML;
+}
+
+/* ---- 各 Skill 结果卡片渲染 ---- */
+function renderDiagnoseCard(d) {
+  const diag = d.diagnosis || {};
+  const alerts = diag.alert_subjects || [];
+  const healthy = diag.healthy_subjects || [];
+  let html = '<div class="agent-result-card"><div class="arc-title">🔍 学习诊断</div>';
+  html += '<div class="arc-tag ' + (diag.overall_status === 'warning' ? 'warn' : 'ok') + '">' +
+    (diag.overall_status === 'warning' ? '⚠️ 有预警科目' : '✅ 状态健康') + '</div>';
+  alerts.forEach(function (a) {
+    html += '<div class="arc-item"><b>' + escapeHtml(a.subject) + '</b> · 严重度 ' + escapeHtml(a.severity) +
+      ' · 连续失败 ' + a.consecutive_failures + ' 天 · 完成率 ' + Math.round(a.recent_7d_completion_rate * 100) + '%</div>';
+    html += '<div class="arc-reason">原因：' + escapeHtml((a.reasons || []).join('；')) + '</div>';
+    html += '<div class="arc-reason">主因：' + escapeHtml(a.primary_cause || '—') + '</div>';
+  });
+  if (healthy.length) {
+    html += '<div class="arc-sub">健康科目</div><div class="arc-item">' +
+      healthy.map(function (h) { return escapeHtml(h.subject); }).join('、') + '</div>';
+  }
+  html += renderEvidenceBlock(diag.evidence);
+  html += '<div class="arc-foot">触发条件：' + escapeHtml(diag.trigger_condition || '') + '</div></div>';
+  return html;
+}
+
+function renderAllocateCard(d) {
+  const allocs = d.allocations || [];
+  const total = allocs.reduce(function (s, a) { return s + (a.allocated_hours || 0); }, 0) || 1;
+  let html = '<div class="agent-result-card"><div class="arc-title">⚖️ 资源再分配</div>';
+  html += '<div class="arc-sub">公式：' + escapeHtml(d.formula || '') + '</div>';
+  allocs.forEach(function (a) {
+    const pct = Math.round((a.allocated_hours || 0) / total * 100);
+    html += '<div class="arc-bar-row">' +
+      '<span class="arc-bar-label">' + escapeHtml(a.subject) + ' ' + a.allocated_hours + 'h</span>' +
+      '<span class="arc-bar-track"><span class="arc-bar-fill" style="width:' + pct + '%"></span></span></div>';
+    html += '<div class="arc-reason">' + escapeHtml(a.reason || '') + '</div>';
+  });
+  html += renderEvidenceBlock(d.evidence);
+  if (d.trigger_reason) html += '<div class="arc-foot">触发：' + escapeHtml(d.trigger_reason) + '</div>';
+  return html + '</div>';
+}
+
+function renderScanCard(d) {
+  const daily = d.daily || [];
+  const maxLoad = Math.max.apply(null, daily.map(function (x) { return x.planned_hours || 0; }).concat([d.cap || 1]));
+  let html = '<div class="agent-result-card"><div class="arc-title">📊 未来 7 天负荷</div>';
+  html += '<div class="arc-sub">负载上限 ' + escapeHtml(String(d.cap)) + 'h（每日可用 × 1.2）</div>';
+  daily.forEach(function (x) {
+    const isOver = !!x.overload;
+    const pct = Math.round((x.planned_hours || 0) / maxLoad * 100);
+    html += '<div class="arc-bar-row' + (isOver ? ' over' : '') + '">' +
+      '<span class="arc-bar-label">' + escapeHtml((x.date || '').slice(5)) + ' ' + escapeHtml(x.weekday) + ' ' + x.planned_hours + 'h' + (isOver ? ' ⚠️超载' : '') + '</span>' +
+      '<span class="arc-bar-track"><span class="arc-bar-fill' + (isOver ? ' over' : '') + '" style="width:' + pct + '%"></span></span></div>';
+  });
+  const moves = d.peak_shaving || [];
+  if (moves.length) {
+    html += '<div class="arc-sub">削峰填谷方案</div>';
+    moves.forEach(function (m) {
+      html += '<div class="arc-reason">' + escapeHtml(m.from) + ' → ' + escapeHtml(m.to) + ' 平移 ' + m.hours + 'h</div>';
+    });
+  }
+  const deg = d.downgrade || [];
+  if (deg.length) {
+    html += '<div class="arc-sub">降级决策</div>';
+    deg.forEach(function (g) {
+      html += '<div class="arc-reason">' + escapeHtml(g.subject) + ' 砍 ' + g.hours + 'h</div>';
+    });
+  }
+  html += renderEvidenceBlock(d.evidence);
+  html += '<div class="arc-foot">' + escapeHtml(d.conclusion || '') + '</div>';
+  if (d.backlog_note) html += '<div class="arc-foot">' + escapeHtml(d.backlog_note) + '</div>';
+  return html + '</div>';
+}
+
+function renderReplanCard(d) {
+  let html = '<div class="agent-result-card"><div class="arc-title">🔄 重新规划</div>';
+  html += '<div class="arc-item">调整任务数：' + (d.adjustments ? d.adjustments.length : 0) + ' 个</div>';
+  (d.adjustments || []).forEach(function (a) {
+    html += '<div class="arc-item"><b>' + escapeHtml(a.subject || a.task_id || '') + '</b>：' +
+      escapeHtml(a.before || '') + ' → ' + escapeHtml(a.after || '') + '</div>';
+    html += '<div class="arc-reason">理由：' + escapeHtml(a.reason || '') + '</div>';
+  });
+  return html + '</div>';
+}
+
+function renderFeedbackCard(d) {
+  let html = '<div class="agent-result-card"><div class="arc-title">💬 反思分析</div>';
+  html += '<div class="arc-item">归因：<b>' + escapeHtml(d.attribution || '—') + '</b></div>';
+  html += '<div class="arc-item">弱知识点：' + ((d.weak_topics && d.weak_topics.length)
+    ? d.weak_topics.map(function (x) { return escapeHtml(x); }).join('、') : '无') + '</div>';
+  html += '<div class="arc-item">情绪：' + escapeHtml(d.mood || '—') + '</div>';
+  html += '<div class="arc-item">建议：' + escapeHtml(d.suggestion || '—') + '</div>';
+  html += renderEvidenceBlock(d.evidence);
+  if (d.source) html += '<div class="arc-foot">来源：' + escapeHtml(d.source === 'llm' ? 'LLM 抽取' : '关键词匹配（离线）') + '</div>';
+  return html + '</div>';
+}
+
+function renderEvidenceBlock(evidence) {
+  if (!Array.isArray(evidence) || !evidence.length) return '';
+  let h = '<div class="arc-sub">依据</div>';
+  evidence.forEach(function (e) {
+    h += '<div class="arc-reason">· ' + escapeHtml(String(e)) + '</div>';
+  });
+  return h;
+}
+
+function renderAgentResults() {
+  const el = document.getElementById('agentResults');
+  if (!el) return;
+  const results = getAgentResults();
+  let html = '';
+  AGENT_RESULT_ORDER.forEach(function (key) {
+    const d = results[key];
+    if (!d) return;
+    if (key === 'diagnose') html += renderDiagnoseCard(d);
+    else if (key === 'replan') html += renderReplanCard(d);
+    else if (key === 'allocate') html += renderAllocateCard(d);
+    else if (key === 'scan') html += renderScanCard(d);
+  });
+  if (!html) html = '<p class="hint">尚未运行任何 Skill。点上面的按钮开始（「分析反思」在反思页，「课表重排」在课表页）。</p>';
+  el.innerHTML = html;
+}
+
+function renderFeedbackResult() {
+  const el = document.getElementById('feedbackResult');
+  if (!el) return;
+  const results = getAgentResults();
+  el.innerHTML = results.feedback ? renderFeedbackCard(results.feedback) : '';
+}
+
+/* ---- 未来 7 天负荷：从每日计划算 planned_hours ---- */
+function buildProactiveDays() {
+  const days = [];
+  const today = todayStr();
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(today, i);
+    const wd = getWeekday(d);
+    let hours = 0;
+    const plan = getPlanForDate(d);
+    if (plan) {
+      AGENT_SUBJECT_MAP.forEach(function (m) {
+        const t = plan[m.timeCol];
+        if (t && t !== '—') hours += hoursFromTime(t);
+      });
+    }
+    days.push({ date: d, weekday: WEEKDAY_NAMES[wd] || '', planned_hours: Math.round(hours * 10) / 10 });
+  }
+  return days;
+}
+
+function countUnmasteredMistakes(state) {
+  return getErrorBook(state).filter(function (e) { return !e.mastered; }).length;
+}
+
+/* ---- 按钮 handler ---- */
+async function doDiagnose() {
+  const btn = document.getElementById('diagnoseBtn');
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch(BACKEND_URL + '/api/diagnose', { method: 'POST' });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '诊断失败');
+    saveAgentResult('diagnose', data);
+    renderAgentResults();
+    setAgentServerStatus('诊断完成：' + ((data.diagnose && data.diagnose.alert_subjects) ? data.diagnose.alert_subjects.length : 0) + ' 个预警科目');
+  } catch (err) {
+    flashAgentError(agentErrMsg(err));
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
+async function doAllocate() {
+  const btn = document.getElementById('allocateBtn');
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch(BACKEND_URL + '/api/allocate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_available_hours: 6 }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '分配失败');
+    saveAgentResult('allocate', data);
+    renderAgentResults();
+    setAgentServerStatus('再分配完成：' + (data.allocations ? data.allocations.length : 0) + ' 科');
+  } catch (err) {
+    flashAgentError(agentErrMsg(err));
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
+async function doProactiveScan() {
+  const btn = document.getElementById('scanBtn');
+  setBtnLoading(btn, true);
+  try {
+    const days = buildProactiveDays();
+    const backlog = countUnmasteredMistakes(loadState());
+    const res = await fetch(BACKEND_URL + '/api/proactive_scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days: days, backlog: backlog }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '扫描失败');
+    saveAgentResult('scan', data);
+    renderAgentResults();
+    setAgentServerStatus('负荷扫描完成：超载 ' + (data.overload_days ? data.overload_days.length : 0) + ' 天');
+  } catch (err) {
+    flashAgentError(agentErrMsg(err));
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
+async function doAnalyzeReflect() {
+  const btn = document.getElementById('analyzeReflectBtn');
+  const acc = (document.getElementById('reflectAccomplishment').value || '').trim();
+  const conf = (document.getElementById('reflectConfusion').value || '').trim();
+  const tom = (document.getElementById('reflectTomorrow').value || '').trim();
+  const reflection = [acc, conf, tom].filter(Boolean).join('；');
+  if (!reflection) { alert('请先填写今天的三段反思'); return; }
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch(BACKEND_URL + '/api/interpret_feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reflection: reflection }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '分析失败');
+    saveAgentResult('feedback', data);
+    renderFeedbackResult();
+  } catch (err) {
+    const el = document.getElementById('feedbackResult');
+    if (el) el.innerHTML = agentErrorCard(agentErrMsg(err));
+  } finally {
+    setBtnLoading(btn, false);
+  }
 }
 
 /* ---------- 设置页 ---------- */
@@ -1721,6 +2419,70 @@ function getErrorBook(state) {
   return state.errorBook;
 }
 
+/* ---------- 错题图片本地持久化：压缩 + 容量保护（让导出备份包含图片） ---------- */
+const EB_PHOTO_MAX_BYTES = 200 * 1024; // 单张 dataURL 字符数上限（≈200KB）
+
+// 错题记录内联图片源优先级：image_base64（本地备份）> photo（旧内联）> photoId（IndexedDB）
+function ebInlineSrc(e) {
+  return e.image_base64 || e.photo || '';
+}
+
+// 把 dataURL 重绘为 800px/指定质量 jpeg
+function compressImageAt(dataUrl, quality, cb) {
+  const img = new Image();
+  img.onload = function () {
+    const canvas = document.createElement('canvas');
+    const maxW = 800, maxH = 800;
+    let w = img.width, h = img.height;
+    if (w > maxW) { h = h * maxW / w; w = maxW; }
+    if (h > maxH) { w = w * maxH / h; h = maxH; }
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    cb(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.onerror = function () { cb(dataUrl); };
+  img.src = dataUrl;
+}
+
+// 容量保护：若 > 200KB 则逐级降质量（0.5 → 0.35 → 0.25），压到阈值内或质量用尽为止
+function fitPhotoSize(dataUrl, cb) {
+  const qualities = [0.5, 0.35, 0.25];
+  let i = 0;
+  function attempt() {
+    if (dataUrl.length <= EB_PHOTO_MAX_BYTES || i >= qualities.length) { cb(dataUrl); return; }
+    compressImageAt(dataUrl, qualities[i], function (out) {
+      dataUrl = out; i++;
+      attempt();
+    });
+  }
+  attempt();
+}
+
+// 预估能否塞下这张图片：当前 state 占用 + 新增图片 是否 < 5MB（localStorage 常见配额）的 95%
+function canStoreImage(dataUrl) {
+  try {
+    const current = (localStorage.getItem(STORE_KEY) || '').length * 2;
+    const need = dataUrl.length * 2;
+    const QUOTA = 5 * 1024 * 1024;
+    return (current + need) < QUOTA * 0.95;
+  } catch (e) { return false; }
+}
+
+// 是否有错题图片已写入 localStorage（image_base64）
+function hasMistakeImages(state) {
+  return (getErrorBook(state) || []).some(function (e) { return !!e.image_base64; });
+}
+
+// 导出时若含图片，短暂提示文件较大
+function showExportSizeHint() {
+  const el = document.getElementById('exportSizeHint');
+  if (!el) return;
+  el.hidden = false;
+  el.textContent = '导出文件较大，因为包含错题图片。';
+  clearTimeout(showExportSizeHint._t);
+  showExportSizeHint._t = setTimeout(function () { el.hidden = true; }, 4000);
+}
+
 /* 标签库：预设 + 用户自定义，去重后返回 */
 function getTagLibrary(state) {
   state.tagLibrary = state.tagLibrary || [];
@@ -1795,7 +2557,7 @@ function renderErrorBook(state) {
   const list = filtered.length ? filtered.map(function (e, i) {
     const realIdx = eb.indexOf(e);
     const severe = (e.reviewCount || 0) >= 3 && !e.mastered;
-    const hasPhoto = e.photoId || e.photo;
+    const hasPhoto = e.image_base64 || e.photoId || e.photo;
     return '<div class="eb-item' + (e.mastered ? ' done' : '') + (severe ? ' severe' : '') + '">' +
       (hasPhoto ? '<img class="eb-thumb" data-ebphoto="' + realIdx + '" data-photoid="' + escapeHtml(e.photoId || e.id) + '" alt="错题照片">' : '') +
       '<span class="eb-date">' + (e.date || '').slice(5) + '</span>' +
@@ -1846,7 +2608,7 @@ function renderErrorBook(state) {
     const pid = img.dataset.photoid;
     if (!pid) return;
     const e = eb[parseInt(img.dataset.ebphoto, 10)];
-    if (e && e.photo) { img.src = e.photo; return; }
+    if (e && ebInlineSrc(e)) { img.src = ebInlineSrc(e); return; }
     getPhotoFromDB(pid).then(function (dataUrl) {
       if (dataUrl) img.src = dataUrl;
     });
@@ -2125,7 +2887,7 @@ function renderEbReviewCard() {
   document.getElementById('ebReviewCard').innerHTML =
     '<div class="eb-card-progress">第 ' + (ebReviewIdx + 1) + ' / ' + ebReviewQueue.length + ' 题</div>' +
     '<div class="eb-card-body">' +
-      (e.photo ? '<img class="eb-card-img" src="' + e.photo + '" alt="错题照片">' : (e.photoId ? '<img class="eb-card-img" data-cardphotoid="' + escapeHtml(e.photoId) + '" alt="错题照片">' : '<div class="eb-card-noimg">📷 无照片</div>')) +
+      (ebInlineSrc(e) ? '<img class="eb-card-img" src="' + ebInlineSrc(e) + '" alt="错题照片">' : (e.photoId ? '<img class="eb-card-img" data-cardphotoid="' + escapeHtml(e.photoId) + '" alt="错题照片">' : '<div class="eb-card-noimg">📷 无照片</div>')) +
       '<div class="eb-card-text">' + escapeHtml(e.text || '(无文字)') + '</div>' +
       (e.tags && e.tags.length ? '<div class="eb-card-tags">' + e.tags.map(function (t) { return '<span class="eb-card-tag" data-ebcardtag="' + escapeHtml(t) + '">' + escapeHtml(t) + '</span>'; }).join('') + '</div>' : '') +
       '<div class="eb-card-meta">已复习 ' + (e.reviewCount || 0) + ' 次 · 加入于 ' + formatDateCN(e.date || todayStr()) + '</div>' +
@@ -2297,7 +3059,7 @@ function renderDayCourses() {
   if (!el) return;
   const wd = selectedWeekday;
   const week = scheduleViewWeek;
-  const courses = (SCHEDULE[wd] || []).filter(function (c) {
+  const courses = getScheduleByWeekday(wd).filter(function (c) {
     return parseWeeks(c.weeks).has(week);
   }).sort(function (a, b) { return a.period - b.period; });
 
@@ -2318,6 +3080,7 @@ function renderDayCourses() {
         '<span>📆 第 ' + c.weeks + ' 周</span>' +
         (c.teacher ? '<span>👨‍🏫 ' + escapeHtml(c.teacher) + '</span>' : '') +
       '</div>' +
+      '<button type="button" class="btn btn-ghost btn-sm dcc-edit" data-editcourse="' + c.id + '">✏️ 编辑</button>' +
     '</div>';
   }).join('');
 }
@@ -2345,7 +3108,7 @@ function renderScheduleGrid(state) {
     // 先统计这一行（大节）在本周是否有任何课程
     let hasAnyCourse = false;
     for (let wd = 1; wd <= 5; wd++) {
-      const list = (SCHEDULE[wd] || []).filter(function (c) {
+      const list = getScheduleByWeekday(wd).filter(function (c) {
         return c.period === p.period && parseWeeks(c.weeks).has(week);
       });
       if (list.length) { hasAnyCourse = true; break; }
@@ -2357,7 +3120,7 @@ function renderScheduleGrid(state) {
     for (let wd = 1; wd <= 5; wd++) {
       const isToday = (week === currentWeek && wd === wdToday);
       // 关键修正：单元格只显示该大节、该周、该星期的课程
-      const courses = (SCHEDULE[wd] || []).filter(function (c) {
+      const courses = getScheduleByWeekday(wd).filter(function (c) {
         return c.period === p.period && parseWeeks(c.weeks).has(week);
       });
       const cell = courses.map(function (c) {
@@ -3342,6 +4105,7 @@ function renderStats(state) {
   renderStudyTime();
   renderPomoStats(state);
   renderHistory(state);
+  renderAdjustLog(state);
 }
 
 /* ---------- 统计页：错题本统计 ---------- */
@@ -3449,6 +4213,389 @@ function renderStudyChart(state) {
 function renderMe(state) {
   renderSettings(state);
   renderWordGoal(state);
+}
+
+/* ============================================================
+   Agent 联动：导出 memory.json / 导入 new_plan.json
+   - 导出：把 localStorage 的打卡记录 + 错题本 + 专注 + 单词 汇总成 Agent 的 memory.json
+   - 导入：把 Agent 生成的 new_plan.json（current_plan + replanning_log）写回未来计划
+   ============================================================ */
+// FastAPI 后端地址（本地开发；部署后改成实际服务地址）
+const BACKEND_URL = localStorage.getItem('BACKEND_URL') || 'http://127.0.0.1:8000';
+
+// 首次从云端/手机访问且尚未设置后端地址时，提醒去「我的」页设置（本机访问默认 127.0.0.1 是对的，不打扰）
+function promptBackendUrlOnce() {
+  if (localStorage.getItem('BACKEND_URL')) return;  // 已设置过
+  const host = (location.hostname || '').toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '';
+  if (isLocal) return;  // 本机/文件协议访问，默认地址正确
+  alert('检测到从云端/手机访问，但尚未设置后端地址。\n请进入「我的」页，填写后端地址（Render 地址）后点「保存」。');
+}
+
+const AGENT_SUBJECT_MAP = [
+  { key: 'math', label: '数学',          timeCol: 'mathTime',    contentCol: 'mathContent',    priority: 'high' },
+  { key: 'ds',   label: '数据结构',      timeCol: 'dsTime',      contentCol: 'dsContent',      priority: 'high' },
+  { key: 'cs',   label: '计算机组成原理', timeCol: 'csTime',      contentCol: 'csContent',      priority: 'medium' },
+  { key: 'eng',  label: '英语',          timeCol: 'englishTime', contentCol: 'englishContent', priority: 'medium' },
+];
+const AGENT_SUBJECT_ALIASES = {
+  math: ['数学'],
+  ds: ['数据结构'],
+  cs: ['计组', '计算机组成原理'],
+  eng: ['英语', '六级'],
+};
+const AGENT_LEVEL_LABELS = {
+  escalation: '升级处理',
+  downgrade: '降级处理',
+  split: '拆分任务',
+  remind: '标红提醒',
+  catch_up: '补欠时段',
+};
+// 各科阶段 deadline（用于 Agent 的 allocate「阶段紧迫度」计算）
+const AGENT_SUBJECT_DEADLINES = {
+  math: '2027-01-15',
+  ds: '2026-11-30',
+  cs: '2026-11-30',
+  eng: '2026-12-20',
+};
+
+/* 时间段字符串 → 小时数（"08:10–09:40；20:30–21:20" → 2.3） */
+function hoursFromTime(timeStr) {
+  if (!timeStr || timeStr === '—') return 0;
+  let totalMin = 0;
+  timeStr.split(/[；;]/).forEach(function (seg) {
+    const m = seg.match(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/);
+    if (!m) return;
+    const s = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    const e = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+    if (e > s) totalMin += (e - s);
+  });
+  return Math.round(totalMin / 6) / 10; // 分钟 → 小时，保留 1 位
+}
+
+/* 找到「今天或最近未来」有计划的日期 */
+function findPlanDate(today) {
+  if (getPlanForDate(today)) return today;
+  for (let i = 1; i <= 14; i++) {
+    const d = addDays(today, i);
+    if (getPlanForDate(d)) return d;
+  }
+  return today;
+}
+
+/* 从 state.days[*].timeline 抽取某科每日「完成/未完成 + 效率评分」记录 */
+function collectSubjectRecords(state, key) {
+  const days = state.days || {};
+  const recs = [];
+  Object.keys(days).sort().forEach(function (dateStr) {
+    const d = days[dateStr];
+    if (!d) return;
+    let subjBlocks = null;
+    if (d.timeline && d.timeline.length) {
+      subjBlocks = d.timeline.filter(function (b) { return b.subject === key && b.id && b.id.indexOf('plan-') === 0; });
+    }
+    if (!subjBlocks || !subjBlocks.length) {
+      // 回退：老版 day.tasks（plan-math / plan-ds / plan-cs / plan-eng）
+      if (d.tasks) {
+        const t = d.tasks.filter(function (x) { return x.id === 'plan-' + key; });
+        if (t.length) recs.push({ date: dateStr, done: !!t[0].done, rating: 0 });
+      }
+      return;
+    }
+    const done = subjBlocks.every(function (b) { return b.done; });
+    const rated = subjBlocks.filter(function (b) { return (b.rating || 0) > 0; });
+    const rating = rated.length ? rated.reduce(function (s, b) { return s + b.rating; }, 0) / rated.length : 0;
+    recs.push({ date: dateStr, done: done, rating: rating });
+  });
+  return recs;
+}
+
+function recentCompletionRate(recs, today) {
+  const cutoff = addDays(today, -6);
+  const recent = recs.filter(function (r) { return r.date >= cutoff && r.date <= today; });
+  if (!recent.length) return 0;
+  return Math.round(recent.filter(function (r) { return r.done; }).length / recent.length * 100) / 100;
+}
+
+function consecutiveFailures(recsByDate, today) {
+  let fails = 0, d = today;
+  for (let i = 0; i < 120; i++) {
+    const r = recsByDate[d];
+    if (r === undefined) break;
+    if (r.done) break;
+    fails++;
+    d = addDays(d, -1);
+  }
+  return fails;
+}
+
+/* 从错题本算某科的错题率 + 未掌握标签（弱知识点） */
+function subjectErrorStats(state, aliases) {
+  const eb = getErrorBook(state);
+  const matches = eb.filter(function (e) {
+    return (e.tags || []).some(function (t) { return aliases.indexOf(t) >= 0; });
+  });
+  const total = matches.length;
+  const unmastered = matches.filter(function (e) { return !e.mastered; }).length;
+  const errorRate = total ? (unmastered / total) : 0;
+  const weak = [];
+  matches.forEach(function (e) {
+    if (e.mastered) return;
+    (e.tags || []).forEach(function (t) {
+      if (aliases.indexOf(t) < 0 && weak.indexOf(t) < 0) weak.push(t);
+    });
+  });
+  return { errorRate: Math.round(errorRate * 100) / 100, weak: weak.slice(0, 5) };
+}
+
+function avgEfficiency(recs) {
+  const rated = recs.filter(function (r) { return (r.rating || 0) > 0; });
+  if (!rated.length) return 4.0;
+  return Math.round(rated.reduce(function (s, r) { return s + r.rating; }, 0) / rated.length * 10) / 10;
+}
+
+/* 近 7 天反思/碎碎念原文（供 Agent 归因引用） */
+function collectReflections(state) {
+  const days = state.days || {};
+  const cutoff = addDays(todayStr(), -6);
+  const out = [];
+  Object.keys(days).sort().forEach(function (dateStr) {
+    if (dateStr < cutoff) return;
+    const d = days[dateStr];
+    if (!d) return;
+    const texts = [];
+    if (d.reflection) {
+      if (d.reflection.confusion) texts.push('困惑：' + d.reflection.confusion);
+      if (d.reflection.accomplishment) texts.push('成就感：' + d.reflection.accomplishment);
+    }
+    if (d.murmurs) {
+      if (d.murmurs.concerns) texts.push('心事：' + d.murmurs.concerns);
+      if (d.murmurs.unhappy) texts.push('不开心：' + d.murmurs.unhappy);
+    }
+    texts.forEach(function (t) { out.push({ date: dateStr, text: t }); });
+  });
+  return out;
+}
+
+/* 把 localStorage 汇总成 Agent 的 memory.json（掌握度按公式计算，不硬编码） */
+function buildAgentMemory(state) {
+  const today = todayStr();
+  const recsByDate = {};
+  AGENT_SUBJECT_MAP.forEach(function (m) {
+    const map = {};
+    collectSubjectRecords(state, m.key).forEach(function (r) { map[r.date] = r; });
+    recsByDate[m.key] = map;
+  });
+
+  const reflections = collectReflections(state);
+  const subjects = {};
+  AGENT_SUBJECT_MAP.forEach(function (m) {
+    const dates = Object.keys(recsByDate[m.key]).sort();
+    const recs = dates.map(function (d) { return recsByDate[m.key][d]; });
+    const cr = recentCompletionRate(recs, today);
+    const fails = consecutiveFailures(recsByDate[m.key], today);
+    const es = subjectErrorStats(state, AGENT_SUBJECT_ALIASES[m.key]);
+    const eff = avgEfficiency(recs);
+    // 升级 ③：拖延计数（本周滚入待办池次数）+ 专注时长（分钟）
+    const procCount = (state.procrastination && state.procrastination.counts && state.procrastination.counts[m.key]) || 0;
+    let focusMinutes = 0;
+    Object.keys(state.days || {}).forEach(function (d) {
+      (state.days[d].focusLog || []).forEach(function (f) {
+        if (f.subject === m.key) focusMinutes += (f.minutes || 0);
+      });
+    });
+    subjects[m.label] = {
+      mastery_score: {
+        value: Math.round((cr * 0.4 + (1 - es.errorRate) * 0.4 + eff / 5 * 0.2) * 10000) / 10000,
+        formula: '完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2',
+        last_calculated: today,
+        raw_data: { completion_rate: cr, error_rate: es.errorRate, avg_efficiency: eff },
+      },
+      consecutive_failures: fails,
+      recent_7d_completion_rate: cr,
+      deadline: AGENT_SUBJECT_DEADLINES[m.key],
+      procrastination_cost: {
+        hours: Math.round(procCount * 0.5 * 10) / 10,  // 拖延块原时长按 0.5h/次估算
+        count: procCount,
+      },
+      focus_minutes: focusMinutes,
+      weak_topics: es.weak,
+      recent_reflections: reflections,
+    };
+  });
+
+  const planDate = findPlanDate(today);
+  const plan = getPlanForDate(planDate);
+  const tasks = [];
+  AGENT_SUBJECT_MAP.forEach(function (m) {
+    if (!plan) return;
+    const t = plan[m.timeCol];
+    const c = plan[m.contentCol];
+    if (!t || t === '—' || /暂停/.test(t) || !c || c === '—') return;
+    const rec = recsByDate[m.key][planDate];
+    tasks.push({
+      task_id: m.key + '_1',
+      subject: m.label,
+      content: c,
+      planned_hours: hoursFromTime(t),
+      scheduled_slots: [t],
+      status: (rec && rec.done) ? 'done' : 'undone',
+      priority: m.priority,
+      depends_on: [],
+    });
+  });
+
+  const recentRecords = [];
+  AGENT_SUBJECT_MAP.forEach(function (m) {
+    Object.keys(recsByDate[m.key]).forEach(function (dateStr) {
+      recentRecords.push({
+        date: dateStr,
+        task_id: m.key + '_1',
+        subject: m.label,
+        status: recsByDate[m.key][dateStr].done ? 'done' : 'undone',
+      });
+    });
+  });
+  recentRecords.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+
+  return {
+    user_profile: {
+      name: '考研大三学生',
+      goal: '2027 年考研（数学一 + 408 计算机专业基础综合）',
+      target_date: getExamDate(state),
+      daily_available_hours: 6,
+      preferred_start_time: '19:00',
+    },
+    current_plan: { generated_at: today, date: planDate, tasks: tasks },
+    learning_memory: { subjects: subjects, overall: { last_updated: today } },
+    rules: {
+      trigger_replan: { consecutive_failures_threshold: 3, completion_rate_threshold: 0.5, lookback_days: 7 },
+      escalation: { replan_count_threshold: 2 },
+    },
+    recent_records: recentRecords,
+    // 把已导入的调整历史带回去，Agent 据此累加重规划次数（触发兜底 escalation 逻辑）
+    replanning_log: state.agentLog || [],
+  };
+}
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* 把 new_plan.json（或 /api/replan 返回体）写回 localStorage，刷新时间轴与调整日志。
+   入参 np 需含 current_plan.tasks 与 replanning_log。返回 {targetDate, count}。 */
+function applyAgentPlan(np) {
+  if (!np || !np.current_plan || !Array.isArray(np.current_plan.tasks)) {
+    throw new Error('响应缺少 current_plan.tasks');
+  }
+  const state = loadState();
+  const today = todayStr();
+  let targetDate = np.current_plan.date || today;
+  if (targetDate < today) targetDate = today; // 只覆盖未来，不动过去
+  const override = {};
+  np.current_plan.tasks.forEach(function (t) {
+    const m = AGENT_SUBJECT_MAP.filter(function (x) { return x.label === t.subject || x.key === t.subject; })[0];
+    if (!m) return;
+    if (override[m.key]) return; // 主任务优先，跳过补欠/升级等附加任务（如 ds_1_catchup）
+    const time = (t.scheduled_slots && t.scheduled_slots[0]) || '';
+    override[m.key] = { time: time || '—', content: t.content };
+  });
+  if (!Object.keys(override).length) {
+    throw new Error('未在新计划里找到可导入的科目任务');
+  }
+  state.agentPlan = state.agentPlan || {};
+  state.agentPlan[targetDate] = override;
+  state.agentLog = np.replanning_log || [];
+  saveState(state);
+  // 刷新今日时间轴与调整日志（时间轴会通过 syncTimelineWithTemplate 自动套用新计划）
+  renderTimeline(loadState(), today);
+  renderAdjustLog(loadState());
+  return { targetDate: targetDate, count: Object.keys(override).length };
+}
+
+/* 更新「Agent 在线联动」卡片里的后端状态提示（type: 'ok' 绿 / 'error' 红 / 缺省灰） */
+function setAgentServerStatus(msg, type) {
+  const el = document.getElementById('agentServerStatus');
+  if (!el) return;
+  el.textContent = '后端状态：' + msg;
+  el.classList.remove('ok', 'error');
+  if (type === 'ok') el.classList.add('ok');
+  else if (type === 'error') el.classList.add('error');
+}
+
+/* 渲染一条调整的结构化依据（连续失败天数 / 完成率 / 反思原文 / 结论） */
+function renderAgentEvidence(ev) {
+  if (!ev || typeof ev !== 'object') return '<div class="agent-log-row">依据：' + escapeHtml(ev || '') + '</div>';
+  let h = '<div class="agent-log-ev">依据：</div>';
+  if (ev.consecutive_failures !== undefined) h += '<div class="agent-log-ev-item">· 连续失败天数：' + ev.consecutive_failures + ' 天</div>';
+  if (ev.completion_rate !== undefined) h += '<div class="agent-log-ev-item">· 近 7 天完成率：' + Math.round(ev.completion_rate * 100) + '%</div>';
+  if (ev.replan_count !== undefined) h += '<div class="agent-log-ev-item">· 重规划次数：' + ev.replan_count + '</div>';
+  if (ev.reflection_quotes && ev.reflection_quotes.length) h += '<div class="agent-log-ev-item">· 反思原文：' + escapeHtml(ev.reflection_quotes.join('；')) + '</div>';
+  if (ev.conclusion) h += '<div class="agent-log-ev-item">· 结论：' + escapeHtml(ev.conclusion) + '</div>';
+  return h;
+}
+
+function extractHours(str) {
+  const m = (str || '').match(/([\d.]+)\s*h\s*$/);
+  return m ? parseFloat(m[1]) : 0;
+}
+
+function agentSubjectKey(label) {
+  const m = AGENT_SUBJECT_MAP.filter(function (x) { return x.label === label; })[0];
+  return m ? m.key : '';
+}
+
+/* 升级 ④：计划对比图——纯 CSS 分组条形图（调整前 / 调整后，按科目分色） */
+function renderAgentChart(adj) {
+  const before = extractHours(adj.before);
+  const after = extractHours(adj.after);
+  const scale = Math.max(before, after, 1.0);
+  const key = agentSubjectKey(adj.subject);
+  const cls = 'subj-' + (key || 'other');
+  function bar(label, val) {
+    const pct = Math.max(4, Math.round(val / scale * 100));
+    return '<div class="agent-log-chart-row">' +
+      '<span class="chart-label">' + label + '</span>' +
+      '<span class="chart-track"><span class="chart-bar ' + cls + '" style="width:' + pct + '%"></span></span>' +
+      '<span class="chart-val">' + val + 'h</span>' +
+      '</div>';
+  }
+  return '<div class="agent-log-chart">' + bar('调整前', before) + bar('调整后', after) + '</div>';
+}
+
+/* 「统计」页：调整日志标签 */
+function renderAdjustLog(state) {
+  const el = document.getElementById('agentAdjustLog');
+  if (!el) return;
+  const logs = state.agentLog || [];
+  if (!logs.length) {
+    el.innerHTML = '<p class="empty">暂无调整日志。先在「我的」页导出 memory.json → 运行 <b>py agent.py</b> 生成 new_plan.json → 导入后，这里会显示 Agent 的调整依据。</p>';
+    return;
+  }
+  let html = '';
+  logs.forEach(function (log) {
+    html += '<div class="agent-log-entry">' +
+      '<div class="agent-log-head">📅 ' + escapeHtml(log.date || '') + '　' + escapeHtml(log.trigger || '') + '</div>';
+    (log.adjustments || []).forEach(function (adj) {
+      html += '<div class="agent-log-item">' +
+        '<div class="agent-log-subject">' + escapeHtml(adj.subject || '') + ' · ' + escapeHtml(AGENT_LEVEL_LABELS[adj.level] || '调整') + '</div>' +
+        '<div class="agent-log-row">调整前：' + escapeHtml(adj.before || '') + '</div>' +
+        '<div class="agent-log-row">调整后：' + escapeHtml(adj.after || '') + '</div>' +
+        renderAgentChart(adj) +
+        '<div class="agent-log-row">理由：' + escapeHtml(adj.reason || '') + '</div>' +
+        renderAgentEvidence(adj.evidence) +
+        '</div>';
+    });
+    if (!(log.adjustments || []).length) html += '<div class="agent-log-item"><div class="agent-log-row">本次诊断无预警科目，计划保持不变。</div></div>';
+    html += '</div>';
+  });
+  el.innerHTML = html;
 }
 
 /* ---------- 事件绑定 ---------- */
@@ -4044,18 +5191,37 @@ function bindEvents() {
       getErrorBook(state).push(newItem);
       // 把选中的自定义标签入库（预设不需要）
       pendingTags.forEach(function (t) { addTagToLibrary(state, t); });
-      saveState(state);
-      // 异步保存照片到 IndexedDB（照片较大，不阻塞 UI）
+
+      const finishAdd = function () {
+        pendingPhoto = '';
+        pendingTags = [];
+        input.value = '';
+        const cur = loadState(); // 以实际落盘结果为准，避免容量超限时显示“幽灵”条目
+        renderErrorBook(cur);
+        renderTimeline(cur, todayStr());
+      };
+
       if (pendingPhoto) {
-        savePhotoToDB(itemId, pendingPhoto).then(function () {
-          renderErrorBook(loadState());
+        // 原图存 IndexedDB（本机预览）；压缩后写 image_base64 进 localStorage（随导出备份带走）
+        savePhotoToDB(itemId, pendingPhoto);
+        fitPhotoSize(pendingPhoto, function (fitted) {
+          if (!canStoreImage(fitted)) {
+            alert('存储空间不足，请导出备份后清理旧数据。\n（图片已保存到本机，但未写入本地备份）');
+            saveStateChecked(state);
+            finishAdd();
+            return;
+          }
+          newItem.image_base64 = fitted;
+          if (!saveStateChecked(state)) {
+            delete newItem.image_base64;
+            alert('存储空间不足，请导出备份后清理旧数据。');
+          }
+          finishAdd();
         });
+      } else {
+        saveState(state);
+        finishAdd();
       }
-      pendingPhoto = '';
-      pendingTags = [];
-      input.value = '';
-      renderErrorBook(state);
-      renderTimeline(state, todayStr());
       return;
     }
     if (e.target.closest('#ebPhotoClear')) {
@@ -4086,7 +5252,7 @@ function bindEvents() {
           '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">关闭</button></div>';
         openModal();
       };
-      if (item.photo) { showPhoto(item.photo); }
+      if (ebInlineSrc(item)) { showPhoto(ebInlineSrc(item)); }
       else { getPhotoFromDB(photoId).then(showPhoto); }
       return;
     }
@@ -4164,7 +5330,7 @@ function bindEvents() {
             p.textContent = '该错题暂无图片，请选择新图片';
             imgEl.replaceWith(p);
           };
-          if (item.photo) { imgEl.src = item.photo; }
+          if (ebInlineSrc(item)) { imgEl.src = ebInlineSrc(item); }
           else { getPhotoFromDB(item.photoId || item.id).then(function (u) { if (u && imgEl) imgEl.src = u; else showPlaceholder(); }); }
         }
         const fileInput = document.getElementById('ebEditPhotoInput');
@@ -4192,9 +5358,16 @@ function bindEvents() {
           const it = eb2[editIdx];
           const photoId = it.photoId || it.id;
           it.photoId = photoId;
-          it.photo = ''; // 统一存入 IndexedDB，清掉旧的 inline base64
-          saveState(st2);
-          savePhotoToDB(photoId, newPhoto).then(function () {
+          it.photo = ''; // 清掉旧 inline；图片走 image_base64（localStorage 备份）+ IndexedDB（预览）
+          // 原图存 IndexedDB；压缩后写 image_base64 进 localStorage，随导出备份带走
+          savePhotoToDB(photoId, newPhoto);
+          fitPhotoSize(newPhoto, function (fitted) {
+            if (canStoreImage(fitted)) {
+              it.image_base64 = fitted;
+            } else {
+              alert('存储空间不足，请导出备份后清理旧数据。\n（图片已保存到本机，但未写入本地备份）');
+            }
+            saveStateChecked(st2);
             renderErrorBook(loadState());
           });
           closeModal();
@@ -4367,7 +5540,9 @@ function bindEvents() {
 
   // 数据导出 / 重置
   document.getElementById('exportBtn').addEventListener('click', function () {
-    const blob = new Blob([JSON.stringify(loadState(), null, 2)], { type: 'application/json' });
+    const state = loadState();
+    if (hasMistakeImages(state)) showExportSizeHint();
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -4378,6 +5553,7 @@ function bindEvents() {
   // 功能 E：导出备份（含 DAILY_PLAN_DATA + 打卡记录 + 错题本）
   document.getElementById('backupBtn').addEventListener('click', function () {
     const state = loadState();
+    if (hasMistakeImages(state)) showExportSizeHint();
     const backup = {
       version: '2',
       exportDate: todayStr(),
@@ -4403,7 +5579,10 @@ function bindEvents() {
         if (!backup || !backup.state) { alert('文件格式不正确：缺少 state 字段'); return; }
         if (!confirm('导入备份会覆盖当前所有数据，确定继续吗？')) return;
         const state = migrateState(backup.state);
-        saveState(state);
+        if (!saveStateChecked(state)) {
+          alert('导入失败：本地存储空间不足，无法写入备份（可能因包含较大错题图片）。\n请先「清空全部数据」后再导入。');
+          return;
+        }
         alert('备份导入成功，即将刷新页面');
         location.reload();
       } catch (err) {
@@ -4419,6 +5598,136 @@ function bindEvents() {
       location.reload();
     }
   });
+
+  // Agent 联动：导出 memory.json
+  document.getElementById('exportAgentBtn').addEventListener('click', function () {
+    const state = loadState();
+    downloadJson(buildAgentMemory(state), 'memory.json');
+  });
+
+  // Agent 联动：导入 new_plan.json（覆盖未来计划 + 写入调整日志）
+  document.getElementById('importAgentFile').addEventListener('change', function (e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      try {
+        const np = JSON.parse(reader.result);
+        const r = applyAgentPlan(np);
+        alert('✅ 已导入 Agent 建议：计划已更新到 ' + r.targetDate + '（' + r.count + ' 个科目任务）。\n可在「今日时间轴」查看新任务，「统计 → 调整日志」查看调整依据。');
+      } catch (err) {
+        alert('导入失败：' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // 后端地址设置（手机访问时改成本机/内网/cpolar 地址）
+  document.getElementById('saveBackendUrlBtn').addEventListener('click', function () {
+    const input = document.getElementById('backendUrlInput');
+    let v = (input.value || '').trim();
+    if (!v) { alert('请输入后端地址，例如 http://127.0.0.1:8000'); return; }
+    v = v.replace(/\/+$/, ''); // 去掉末尾斜杠，避免拼接出 /api 双斜杠
+    localStorage.setItem('BACKEND_URL', v);
+    alert('已保存，刷新页面生效');
+    location.reload();
+  });
+
+  // FastAPI 在线联动 ①：导出并发送 memory.json
+  document.getElementById('sendAgentBtn').addEventListener('click', async function () {
+    const btn = document.getElementById('sendAgentBtn');
+    setBtnLoading(btn, true);
+    try {
+      const memory = buildAgentMemory(loadState());
+      const res = await fetch(BACKEND_URL + '/api/export_memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(memory),
+      });
+      const data = await res.json();
+      if (data.status !== 'ok') throw new Error(data.message || '发送失败');
+      setAgentServerStatus('✅ 已接收 memory.json，可点击「重新规划」', 'ok');
+    } catch (err) {
+      flashAgentError('发送失败：' + agentErrMsg(err) + '（请确认已启动后端 py server.py）');
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  });
+
+  // FastAPI 在线联动 ②：重新规划（读 memory.json → diagnose + replan → 写回新计划）
+  document.getElementById('replanBtn').addEventListener('click', async function () {
+    const btn = document.getElementById('replanBtn');
+    setBtnLoading(btn, true);
+    try {
+      const res = await fetch(BACKEND_URL + '/api/replan', { method: 'POST' });
+      const data = await res.json();
+      if (data.status !== 'ok') throw new Error(data.message || '规划失败');
+      const r = applyAgentPlan({ current_plan: data.new_plan, replanning_log: data.replanning_log });
+      saveAgentResult('replan', { adjustments: data.adjustments || [] });
+      renderAgentResults();
+      setAgentServerStatus('已生成新计划，写入 ' + r.targetDate + '（' + r.count + ' 个科目）');
+    } catch (err) {
+      flashAgentError('重新规划：' + agentErrMsg(err) + '（请先点「导出并发送 Agent」，并确认后端已启动）');
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  });
+
+  // 6 个 Skill 前端入口：诊断 / 再分配 / 负荷扫描 / 反思分析
+  document.getElementById('diagnoseBtn').addEventListener('click', doDiagnose);
+  document.getElementById('allocateBtn').addEventListener('click', doAllocate);
+  document.getElementById('scanBtn').addEventListener('click', doProactiveScan);
+  document.getElementById('analyzeReflectBtn').addEventListener('click', doAnalyzeReflect);
+
+  // FastAPI 在线联动 ③：上传错题照片（multipart/form-data）
+  document.getElementById('mistakePhotoInput').addEventListener('change', async function (e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    // 加载态作用在可见的 label 按钮上（input 本身 hidden 无文字）
+    const btn = document.querySelector('label[for="mistakePhotoInput"]') || document.getElementById('mistakePhotoInput');
+    setBtnLoading(btn, true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('tag', '错题');
+      const res = await fetch(BACKEND_URL + '/api/upload_mistake', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.status !== 'ok') throw new Error(data.message || '上传失败');
+      setAgentServerStatus('✅ 已上传照片：' + data.filename + '（标签：' + (data.tag || '—') + '）', 'ok');
+    } catch (err) {
+      flashAgentError('上传失败：' + agentErrMsg(err));
+    } finally {
+      setBtnLoading(btn, false);
+      e.target.value = '';
+    }
+  });
+
+  // 课表编辑：✏️ 编辑按钮（document 委托，覆盖按日/固定课表两处渲染）
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-editcourse]');
+    if (!btn) return;
+    openCourseForm('edit', btn.dataset.editcourse);
+  });
+
+  // 课表管理：➕ 新增课程
+  const addCourseBtn = document.getElementById('addCourseBtn');
+  if (addCourseBtn) addCourseBtn.addEventListener('click', function () { openCourseForm('add'); });
+
+  // 课表管理：📷 导入课表图片（压缩→base64→POST /api/parse_schedule→可编辑→导入）
+  const importScheduleBtn = document.getElementById('importScheduleBtn');
+  const importScheduleInput = document.getElementById('importScheduleInput');
+  if (importScheduleBtn && importScheduleInput) {
+    importScheduleBtn.addEventListener('click', function () { importScheduleInput.click(); });
+    importScheduleInput.addEventListener('change', function (e) {
+      handleImportScheduleFiles(e.target.files);
+      e.target.value = '';
+    });
+  }
+
+  // 课表管理：🔄 检测课表冲突并重排（POST /api/reschedule）
+  const rescheduleBtn = document.getElementById('rescheduleBtn');
+  if (rescheduleBtn) rescheduleBtn.addEventListener('click', doReschedule);
 
   // 弹窗点背景关闭
   document.getElementById('modalOverlay').addEventListener('click', function (e) {
@@ -4459,6 +5768,15 @@ function init() {
   bindEvents();
   initStudyTracker();
   initTimelineRefresh();
+
+  // 回填后端地址设置框为当前 BACKEND_URL
+  const backendUrlInput = document.getElementById('backendUrlInput');
+  if (backendUrlInput) backendUrlInput.value = BACKEND_URL;
+  promptBackendUrlOnce();
+
+  // 恢复上次运行过的 Skill 结果卡片（localStorage 持久化，刷新不丢）
+  renderAgentResults();
+  renderFeedbackResult();
 
   // 启动时校验时间轴与真实课表是否冲突，结果输出到控制台
   try {

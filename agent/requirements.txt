@@ -1,0 +1,9 @@
+# FastAPI 后端依赖（skills.py 仅用标准库，无需额外依赖）
+fastapi
+uvicorn[standard]
+python-multipart
+# Supabase 云端存储（memory 表 + 错题图片 Storage；未配置环境变量时自动降级本地）
+supabase
+# /api/parse_schedule 课表 OCR 用（agent.py 也用到 requests + python-dotenv）
+requests
+python-dotenv

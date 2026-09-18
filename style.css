@@ -232,6 +232,20 @@ select {
 .btn.danger { color: #c0392b; border-color: #e3b3ad; }
 .btn-end { background: #d9534f; color: #fff; }
 .btn-end:active { background: #c9302c; }
+.btn-warn { background: #d99a00; color: #fff; }
+
+/* ========== 课表管理工具栏 ========== */
+.card-toolbar { border-left: 4px solid #d99a00; }
+.toolbar-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.toolbar-row .btn { flex: 1; min-width: 150px; }
+
+/* ========== 课表导入：识别结果可编辑列表 ========== */
+.imp-row { background: #fff5f8; border: 1px solid rgba(0, 0, 0, .08); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+.imp-row-title { font-size: .82rem; font-weight: 700; color: #7d5c69; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.imp-del { padding: 2px 8px; }
+.imp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.imp-grid label { font-size: .78rem; font-weight: 600; color: #7d5c69; align-self: center; }
+.imp-grid input, .imp-grid select { padding: 7px 9px; border: 1px solid rgba(0, 0, 0, .12); border-radius: 9px; font-size: 14px; background: #fff; color: #4a2c38; width: 100%; box-sizing: border-box; }
 
 /* ========== 反思 ========== */
 .field { margin-bottom: 14px; }
@@ -1390,4 +1404,82 @@ table.schedule .sc-loc { font-size: .64rem; }
 .eb-stat-label { font-size: .76rem; color: #a0808a; margin-top: 4px; }
 @media (max-width: 480px) {
   .eb-stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ========== Agent 联动 / 调整日志 ========== */
+.card-agent .hint { margin-bottom: 10px; }
+.card-agent code {
+  background: #fff0f4; color: #ad1457; border-radius: 4px; padding: 1px 5px; font-size: .85em;
+}
+
+/* 调整日志条目 */
+.agent-log-entry {
+  background: #fffafc; border: 1px solid #fce4ec; border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.agent-log-head { font-size: .9rem; font-weight: 700; color: #4a2c38; margin-bottom: 8px; }
+.agent-log-item {
+  background: #fff; border-left: 3px solid #e91e63; border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.agent-log-item:last-child { margin-bottom: 0; }
+.agent-log-subject { font-weight: 700; color: #ad1457; margin-bottom: 4px; }
+.agent-log-row { font-size: .85rem; color: #5a3a44; line-height: 1.6; }
+.agent-log-ev { font-size: .85rem; color: #5a3a44; margin-top: 6px; font-weight: 600; }
+.agent-log-ev-item { font-size: .82rem; color: #8a6a74; line-height: 1.7; padding-left: 8px; }
+
+/* 升级 ④：计划对比图——纯 CSS 分组条形图（调整前 / 调整后，按科目分色） */
+.agent-log-chart { margin: 8px 0 2px; padding: 8px 10px; background: #fdf3f7; border-radius: 8px; }
+.agent-log-chart-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.agent-log-chart-row .chart-label { flex: 0 0 44px; font-size: .78rem; color: #8a6a74; text-align: right; }
+.agent-log-chart-row .chart-track { flex: 1; height: 14px; background: #f3e0e8; border-radius: 7px; overflow: hidden; }
+.agent-log-chart-row .chart-bar { display: block; height: 100%; border-radius: 7px; min-width: 4px; transition: width .3s ease; }
+.agent-log-chart-row .chart-val { flex: 0 0 44px; font-size: .78rem; color: #5a3a44; font-variant-numeric: tabular-nums; }
+/* 科目分色（与饼图/柱状图浅粉系协调，但保证区分度） */
+.chart-bar.subj-math { background: #e91e63; }
+.chart-bar.subj-ds { background: #9c27b0; }
+.chart-bar.subj-cs { background: #3f51b5; }
+.chart-bar.subj-eng { background: #ff9800; }
+.chart-bar.subj-other { background: #90a4ae; }
+
+/* 升级 ⑤：6 个 Skill 结果卡片（loading / 结果卡 / 错误红条） */
+.agent-result-card {
+  margin: 10px 0; padding: 12px 14px;
+  background: #fff; border: 1px solid #f3d9e2; border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(173,20,87,.06);
+}
+.agent-result-card.error {
+  background: #fdeaea; border-color: #f5b5b5; color: #c62828; font-size: .88rem;
+}
+.arc-title { font-size: .95rem; font-weight: 700; color: #ad1457; margin-bottom: 8px; }
+.arc-tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; margin-bottom: 8px; }
+.arc-tag.ok { background: #e6f4ea; color: #1e7e34; }
+.arc-tag.warn { background: #fdeaea; color: #c62828; }
+.arc-item { font-size: .86rem; color: #5a3a44; line-height: 1.6; margin: 3px 0; }
+.arc-reason { font-size: .82rem; color: #8a6a74; line-height: 1.6; padding-left: 10px; margin: 2px 0; }
+.arc-sub { font-size: .82rem; font-weight: 700; color: #8a6a74; margin: 10px 0 4px; }
+.arc-foot { font-size: .78rem; color: #b08a96; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #f0d8e0; line-height: 1.5; }
+.arc-bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.arc-bar-label { flex: 0 0 118px; font-size: .78rem; color: #5a3a44; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arc-bar-row.over .arc-bar-label { color: #c62828; font-weight: 700; }
+.arc-bar-track { flex: 1; height: 12px; background: #f3e0e8; border-radius: 6px; overflow: hidden; }
+.arc-bar-fill { display: block; height: 100%; background: linear-gradient(90deg, #f48fb1, #e91e63); border-radius: 6px; min-width: 3px; }
+.arc-bar-fill.over { background: linear-gradient(90deg, #ef5350, #c62828); }
+.btn[disabled] { opacity: .55; cursor: not-allowed; }
+
+/* 课表重排结果红条（Skill⑥ 错误态） */
+.schedule-note.error { color: #c62828; font-weight: 600; }
+
+/* 后端状态栏绿色/红色反馈（修复 A：统一 2 个基础设施按钮） */
+#agentServerStatus.ok { color: #1e7e34; font-weight: 600; }
+#agentServerStatus.error { color: #c62828; font-weight: 600; }
+
+/* ========== 移动端适配（≤768px） ========== */
+@media (max-width: 768px) {
+  body { font-size: 14px; padding: 8px 8px 84px; }
+  .container { padding: 8px; }
+  .tabbar { flex-wrap: wrap; }
+  .btn { min-height: 44px; font-size: 14px; }
+  table { font-size: 12px; }
+  .card { padding: 10px; margin-bottom: 10px; }
 }
