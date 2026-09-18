@@ -47,7 +47,7 @@ DAYS = [
 ]
 
 # 数据结构每天失败后的「碎碎念」反思原文（供 diagnose 归因引用）
-# 注意：Day 1 / Day 5 的两条「指针基础」反思已预置到 memory.json（source=initial_memory），
+# 注意：三条「指针基础」反思（09-08 / 09-09 / 09-10）已预置到 memory.json（source=initial_memory），
 # 这里不再运行时注入，避免重复。
 REFLECTIONS = {
     2: "时间不够，写到一半就困了，明天补。",
@@ -118,7 +118,7 @@ def add_reflection(memory, date, day):
     """失败科目当天的碎碎念（反思原文），供 diagnose 归因引用。
 
     仅当 REFLECTIONS 中存在该日文案时才注入（source=runtime_injected）；
-    已预置到 memory.json 的反思（如 Day 1 / Day 5）不在此重复注入。
+    已预置到 memory.json 的反思（09-08 / 09-09 / 09-10 三条指针反思）不在此重复注入。
     """
     text = REFLECTIONS.get(day)
     if not text:
@@ -182,11 +182,10 @@ def print_user_profile_report(memory):
 
 
 def print_evidence(evidence):
-    """结构化打印「调整依据」：连续失败天数 / 完成率 / 反思原文 / 结论。"""
+    """结构化打印「调整依据」：连续失败天数 / 完成率 / 多维度归因（主因/次因/弱知识点/情绪）/ 结论。"""
     if isinstance(evidence, dict):
         fails = evidence.get("consecutive_failures")
         rate = evidence.get("completion_rate", 0)
-        quotes = evidence.get("reflection_quotes") or []
         conclusion = evidence.get("conclusion", "")
         replan_count = evidence.get("replan_count")
         print("   依据：")
@@ -194,9 +193,16 @@ def print_evidence(evidence):
         print(f"     · 近 7 天完成率：{rate:.0%}")
         if replan_count is not None:
             print(f"     · 重规划次数：{replan_count}")
-        if quotes:
-            print(f"     · 反思原文：{'；'.join(quotes)}")
-        print(f"     · 结论：{conclusion}")
+        if evidence.get("primary_cause"):
+            print(f"     · 主因：{evidence['primary_cause']}")
+        if evidence.get("secondary_cause"):
+            print(f"     · 次因：{evidence['secondary_cause']}")
+        if evidence.get("weak_topics"):
+            print(f"     · 弱知识点：{'、'.join(evidence['weak_topics'])}")
+        if evidence.get("emotion"):
+            print(f"     · 情绪：{evidence['emotion']}")
+        if conclusion:
+            print(f"     · 结论：{conclusion}")
     else:
         print(f"   依据：{evidence}")
 
@@ -233,8 +239,12 @@ def print_diagnosis(diag):
         for r in a["reasons"]:
             print(f"    - {r}")
         print(f"    主因：{a['primary_cause']}")
-        if a["reflection_quotes"]:
-            print(f"    反思原文引用：{a['reflection_quotes'][-1]}")
+        if a.get("secondary_cause"):
+            print(f"    次因：{a['secondary_cause']}")
+        if a.get("weak_topics"):
+            print(f"    弱知识点：{'、'.join(a['weak_topics'])}")
+        if a.get("emotion"):
+            print(f"    情绪：{a['emotion']}")
     for h in diag["healthy_subjects"]:
         print(f"  健康科目：{h['subject']}  掌握度={h['mastery_score']}")
 
@@ -297,10 +307,13 @@ def demo_interpret_feedback(planner):
     text = "单链表插入删除还是卡，感觉是方法不对。"
     result = planner._interpret_feedback(text)
     print(f"反思原文：「{text}」")
-    print(f"  归因：{result['attribution']}")
-    print(f"  弱知识点：{result['weak_topics']}")
-    print(f"  情绪：{result['mood']}")
-    print(f"  建议：{result['suggestion']}")
+    print(f"  主因：{result['primary_cause']}")
+    if result.get("secondary_cause"):
+        print(f"  次因：{result['secondary_cause']}")
+    if result.get("weak_topics"):
+        print(f"  弱知识点：{'、'.join(result['weak_topics'])}")
+    print(f"  情绪：{result['emotion']}")
+    print(f"  提炼结论：{result['evidence_summary']}")
     print(f"  解析来源：{'LLM 抽取' if result.get('source') == 'llm' else '关键词匹配（降级路径，稳定兜底）'}")
     if result.get("degraded"):
         print("  说明：本 demo 默认走降级路径，验证『LLM 不可用时的容错能力』。")
@@ -635,7 +648,13 @@ async def main():
             )
             # 修正 B：推荐 A 的依据（可解释性——为什么是 A 而不是 B/C）
             print("⑤ 系统推荐 A（换路径补基础）的依据：")
-            print("   · 反思原文 3 次指向『指针基础』（「指针基础不牢」「链表指针老是搞混」「该先补 C 指针基础」）")
+            ptr_refs = [
+                r["text"]
+                for r in memory["learning_memory"]["subjects"]["数据结构"].get("recent_reflections", [])
+                if r.get("source") == "initial_memory"
+            ]
+            quoted = "」「".join(ptr_refs)
+            print(f"   · 反思原文 {len(ptr_refs)} 次指向『指针基础』（「{quoted}」）")
             print("     → 判断是前置知识缺失，而非能力不足")
             print("   · 近 7 天完成率 0%，说明当前路径不可行")
             print("   · 换路径成本最低（2 天专项），不伤及考研主线")

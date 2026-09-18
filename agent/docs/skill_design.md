@@ -13,7 +13,7 @@ LLM（DeepSeek V4）只负责在 openJiuwen 的 ReAct 循环里按需调度它�
 | 项 | 内容 |
 | --- | --- |
 | 输入 | `learning_memory`（各科目掌握度 / 连续失败天数 / 近7天完成率 / 弱知识点 / 反思原文） |
-| 输出 | 诊断报告 `diagnosis`：`overall_status` + `alert_subjects[]`（severity / reasons / primary_cause / reflection_quotes）+ `healthy_subjects[]` |
+| 输出 | 诊断报告 `diagnosis`：`overall_status` + `alert_subjects[]`（severity / reasons / primary_cause / secondary_cause / weak_topics / emotion / evidence_summary）+ `healthy_subjects[]` |
 | 调用条件 | ① 生成新计划前；② 某科目连续 3 天未完成、触发重规划前 |
 
 **严重度判定**（`skills._severity`）：
@@ -25,8 +25,9 @@ LLM（DeepSeek V4）只负责在 openJiuwen 的 ReAct 循环里按需调度它�
 | 连续失败 ≥ 2 天，或近 7 天完成率 < 50% | `medium` |
 | 其它 | `low` |
 
-**归因**（`skills._primary_cause`）：对反思原文做关键词匹配，输出可解释主因——
-「方法不当」「时间投入不足」「目标与能力不匹配」等。
+**归因**（`skills._attribute_reflections`）：对反思原文做关键词匹配，按 8 个维度
+（方法不当 / 情绪干扰 / 精力不足 / 目标不清晰 / 时间投入不足 / 任务过载 / 基础薄弱 / 环境干扰）
+命中最多者为主因、次多者为次因，输出可解释的 `primary_cause / secondary_cause / weak_topics / emotion / evidence_summary`。
 
 ---
 
@@ -110,7 +111,7 @@ weight   = 科目优先级(subject_weights) × 阶段紧迫度(deadline) × 连�
 1. **规则引擎 + LLM 编排分离**：调整逻辑是确定性的，可复现、可审计、可单测；
    LLM 只做「何时调 Skill + 如何解释」，把可解释性交给结构化的 `reason/evidence`。
 2. **调整明细自带证据**：每一条调整都带 `before/after/reason/evidence`，
-   其中 `evidence` 直接引用历史记录与反思原文，避免「模型瞎编理由」。
+   其中 `evidence` 引用连续失败天数、完成率与提炼后的归因结论（主因/次因/弱知识点/情绪），避免「模型瞎编理由」。
 3. **兜底升级**：用 `replan_count` 记录连续重规划次数，避免「同一招反复用」，
    两次后强制换策略并给出三个方向（推荐 A）——这是对「动态调整」的闭环收口。
 4. **6 个 Skill 覆盖全生命周期**：诊断（怎么变差）→ 重规划（怎么改）→ 分配（多科怎么分）→

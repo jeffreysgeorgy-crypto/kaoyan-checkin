@@ -1,6 +1,6 @@
 {
   "user_profile": {
-    "name": "张同学",
+    "name": "考研大三学生",
     "goal": "2027 年考研（数学一 + 408 计算机专业基础综合）",
     "target_date": "2027-12-18",
     "daily_available_hours": 6,
@@ -8,16 +8,17 @@
   },
   "current_plan": {
     "generated_at": "2026-09-11",
+    "date": "2026-09-11",
     "tasks": [
       {
         "task_id": "math_1",
         "subject": "数学",
-        "content": "高数：极限与连续（例题 + 习题）",
+        "content": "高数：极限与连续（例题+习题）",
         "planned_hours": 1.5,
         "scheduled_slots": [
           "19:00-20:30"
         ],
-        "status": "done",
+        "status": "undone",
         "priority": "high",
         "depends_on": []
       },
@@ -27,7 +28,7 @@
         "content": "暂停原任务：改为『知识点概念梳理 + 错题回顾』",
         "planned_hours": 0.5,
         "scheduled_slots": [
-          "20:30-21:00"
+          "13:30-14:00"
         ],
         "status": "undone",
         "priority": "high",
@@ -40,9 +41,9 @@
         "content": "存储器层次结构（Cache）",
         "planned_hours": 1.0,
         "scheduled_slots": [
-          "19:00-20:00"
+          "15:30-16:30"
         ],
-        "status": "done",
+        "status": "undone",
         "priority": "medium",
         "depends_on": []
       },
@@ -54,24 +55,152 @@
         "scheduled_slots": [
           "07:30-08:00"
         ],
-        "status": "done",
-        "priority": "medium",
-        "depends_on": []
-      },
-      {
-        "task_id": "ds_1_catchup",
-        "subject": "数据结构",
-        "content": "补欠专项：①错题回顾 30min ②指针基础专项 30min（共 1.0h）",
-        "planned_hours": 1.0,
-        "scheduled_slots": [],
         "status": "undone",
         "priority": "medium",
-        "flag": "catch_up",
-        "depends_on": [
-          "ds_1"
-        ]
+        "depends_on": []
       }
     ]
+  },
+  "learning_memory": {
+    "subjects": {
+      "数学": {
+        "mastery_score": {
+          "value": 0.96,
+          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
+          "last_calculated": "2026-09-16",
+          "raw_data": {
+            "completion_rate": 1.0,
+            "error_rate": 0,
+            "avg_efficiency": 4
+          }
+        },
+        "consecutive_failures": 0,
+        "recent_7d_completion_rate": 1.0,
+        "deadline": "2027-01-15",
+        "procrastination_cost": {
+          "hours": 0,
+          "count": 0
+        },
+        "focus_minutes": 0,
+        "weak_topics": [],
+        "recent_reflections": []
+      },
+      "数据结构": {
+        "mastery_score": {
+          "value": 0.56,
+          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
+          "last_calculated": "2026-09-16",
+          "raw_data": {
+            "completion_rate": 0.0,
+            "error_rate": 0,
+            "avg_efficiency": 4
+          }
+        },
+        "consecutive_failures": 6,
+        "recent_7d_completion_rate": 0.0,
+        "deadline": "2026-11-30",
+        "procrastination_cost": {
+          "hours": 0,
+          "count": 0
+        },
+        "focus_minutes": 0,
+        "weak_topics": [],
+        "recent_reflections": [
+          {
+            "date": "2026-09-08",
+            "text": "链表学了两遍还是懵，感觉指针基础不牢。",
+            "source": "initial_memory"
+          },
+          {
+            "date": "2026-09-09",
+            "text": "链表指针老是搞混，看视频懂了自己写又不会。",
+            "source": "initial_memory"
+          },
+          {
+            "date": "2026-09-10",
+            "text": "感觉数据结构比想象中难，是不是该先补 C 指针基础。",
+            "source": "initial_memory"
+          },
+          {
+            "date": "2026-09-12",
+            "text": "时间不够，写到一半就困了，明天补。",
+            "source": "runtime_injected"
+          },
+          {
+            "date": "2026-09-13",
+            "text": "单链表插入删除还是卡，感觉是方法不对。",
+            "source": "runtime_injected"
+          },
+          {
+            "date": "2026-09-14",
+            "text": "拆分后还是没做完，视频看了题做不出来。",
+            "source": "runtime_injected"
+          },
+          {
+            "date": "2026-09-16",
+            "text": "连续一周没完成了，开始怀疑考研计划是不是定太高了。",
+            "source": "runtime_injected"
+          }
+        ]
+      },
+      "计算机组成原理": {
+        "mastery_score": {
+          "value": 0.96,
+          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
+          "last_calculated": "2026-09-16",
+          "raw_data": {
+            "completion_rate": 1.0,
+            "error_rate": 0,
+            "avg_efficiency": 4
+          }
+        },
+        "consecutive_failures": 0,
+        "recent_7d_completion_rate": 1.0,
+        "deadline": "2026-11-30",
+        "procrastination_cost": {
+          "hours": 0,
+          "count": 0
+        },
+        "focus_minutes": 0,
+        "weak_topics": [],
+        "recent_reflections": []
+      },
+      "英语": {
+        "mastery_score": {
+          "value": 0.96,
+          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
+          "last_calculated": "2026-09-16",
+          "raw_data": {
+            "completion_rate": 1.0,
+            "error_rate": 0,
+            "avg_efficiency": 4
+          }
+        },
+        "consecutive_failures": 0,
+        "recent_7d_completion_rate": 1.0,
+        "deadline": "2026-12-20",
+        "procrastination_cost": {
+          "hours": 0,
+          "count": 0
+        },
+        "focus_minutes": 0,
+        "weak_topics": [],
+        "recent_reflections": []
+      }
+    },
+    "overall": {
+      "last_updated": "2026-09-16"
+    }
+  },
+  "rules": {
+    "trigger_replan": {
+      "consecutive_failures_threshold": 3,
+      "completion_rate_threshold": 0.5,
+      "lookback_days": 7
+    },
+    "escalation": {
+      "replan_count_threshold": 2
+    }
   },
   "schedule": {
     "version": 1,
@@ -121,184 +250,6 @@
         "hours": 1.7
       }
     ]
-  },
-  "learning_memory": {
-    "subjects": {
-      "数学": {
-        "mastery_score": {
-          "value": 0.908,
-          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
-          "last_calculated": "2026-09-16",
-          "raw_data": {
-            "completion_rate": 1.0,
-            "error_rate": 0.15,
-            "avg_efficiency": 4.2
-          }
-        },
-        "consecutive_failures": 0,
-        "recent_7d_completion_rate": 1.0,
-        "deadline": "2027-01-15",
-        "procrastination_cost": {
-          "hours": 0.3,
-          "count": 1
-        },
-        "weak_topics": [],
-        "recent_reflections": []
-      },
-      "数据结构": {
-        "mastery_score": {
-          "value": 0.3,
-          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
-          "last_calculated": "2026-09-16",
-          "raw_data": {
-            "completion_rate": 0.0,
-            "error_rate": 0.5,
-            "avg_efficiency": 2.5
-          }
-        },
-        "consecutive_failures": 6,
-        "recent_7d_completion_rate": 0.0,
-        "deadline": "2026-11-30",
-        "procrastination_cost": {
-          "hours": 2.5,
-          "count": 5
-        },
-        "weak_topics": [
-          "链表",
-          "树"
-        ],
-        "recent_reflections": [
-          {
-            "date": "2026-09-08",
-            "text": "链表学了两遍还是懵，感觉指针基础不牢。",
-            "source": "initial_memory"
-          },
-          {
-            "date": "2026-09-09",
-            "text": "链表指针老是搞混，看视频懂了自己写又不会。",
-            "source": "initial_memory"
-          },
-          {
-            "date": "2026-09-07",
-            "text": "数据结构越学越吃力，是不是方法有问题。",
-            "source": "initial_memory"
-          },
-          {
-            "date": "2026-09-10",
-            "text": "感觉数据结构比想象中难，是不是该先补 C 指针基础。",
-            "source": "initial_memory"
-          },
-          {
-            "date": "2026-09-12",
-            "text": "时间不够，写到一半就困了，明天补。",
-            "source": "runtime_injected"
-          },
-          {
-            "date": "2026-09-13",
-            "text": "单链表插入删除还是卡，感觉是方法不对。",
-            "source": "runtime_injected"
-          },
-          {
-            "date": "2026-09-14",
-            "text": "拆分后还是没做完，视频看了题做不出来。",
-            "source": "runtime_injected"
-          },
-          {
-            "date": "2026-09-16",
-            "text": "连续一周没完成了，开始怀疑考研计划是不是定太高了。",
-            "source": "runtime_injected"
-          }
-        ]
-      },
-      "计算机组成原理": {
-        "mastery_score": {
-          "value": 0.88,
-          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
-          "last_calculated": "2026-09-16",
-          "raw_data": {
-            "completion_rate": 1.0,
-            "error_rate": 0.2,
-            "avg_efficiency": 4.0
-          }
-        },
-        "consecutive_failures": 0,
-        "recent_7d_completion_rate": 1.0,
-        "deadline": "2026-11-30",
-        "procrastination_cost": {
-          "hours": 0.0,
-          "count": 0
-        },
-        "weak_topics": [],
-        "recent_reflections": []
-      },
-      "英语": {
-        "mastery_score": {
-          "value": 0.852,
-          "formula": "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2",
-          "last_calculated": "2026-09-16",
-          "raw_data": {
-            "completion_rate": 1.0,
-            "error_rate": 0.25,
-            "avg_efficiency": 3.8
-          }
-        },
-        "consecutive_failures": 0,
-        "recent_7d_completion_rate": 1.0,
-        "deadline": "2026-12-20",
-        "procrastination_cost": {
-          "hours": 0.0,
-          "count": 0
-        },
-        "weak_topics": [],
-        "recent_reflections": []
-      }
-    },
-    "overall": {
-      "last_updated": "2026-09-16",
-      "plan_generation_count": 1
-    }
-  },
-  "rules": {
-    "trigger_replan": {
-      "consecutive_failures_threshold": 3,
-      "completion_rate_threshold": 0.5,
-      "lookback_days": 7
-    },
-    "subject_weights": {
-      "数学": 0.45,
-      "数据结构": 0.3,
-      "计算机组成原理": 0.1,
-      "英语": 0.15
-    },
-    "min_floor": 0.5,
-    "procrastination": {
-      "hours_threshold": 2.0
-    },
-    "task_downgrade": {
-      "high_failures_threshold": 5,
-      "split_failures": 3,
-      "medium_severity_action": "仅标红提醒，不改变计划内容",
-      "low_severity_action": "不干预"
-    },
-    "escalation": {
-      "replan_count_threshold": 2,
-      "action": "换任务类型（从刷题推进转为概念梳理 + 错题回顾），并给出三个方向供用户选择：A 换路径补基础（推荐）/ B 降目标顺延到寒假 / C 审视目标"
-    },
-    "replan": {
-      "downgrade_hours": 0.5,
-      "split_reduction": 0.5,
-      "fallback_hours": 0.5,
-      "catchup_max_hours": 1.0
-    },
-    "allocate": {
-      "high_mastery": 0.8,
-      "high_rate": 0.8,
-      "low_mastery": 0.6,
-      "downgrade_delta": 0.3
-    },
-    "proactive_scan": {
-      "overload_factor": 1.2
-    }
   },
   "recent_records": [
     {
@@ -455,34 +406,21 @@
           "task_id": "ds_1",
           "subject": "数据结构",
           "level": "split",
-          "before": "数据结构：单链表的插入与删除，1.5h",
-          "after": "数据结构：单链表的插入与删除（拆分：①看讲解视频 30min ②做 2 道基础题 30min），1.0h",
+          "before": "数据结构：单链表的插入与删除，共 1.5h",
+          "after": "数据结构：看王道视频 30min + 做课后题 30min，共 1.0h",
           "reason": "连续失败 3 天达到阈值，采取『减少时长 + 拆分任务』：把大块任务拆成可完成的子步骤，降低启动门槛。",
           "evidence": {
             "consecutive_failures": 3,
             "completion_rate": 0.0,
-            "reflection_quotes": [
-              "时间不够，写到一半就困了，明天补。",
-              "单链表插入删除还是卡，感觉是方法不对。"
+            "primary_cause": "方法不当",
+            "secondary_cause": "精力不足",
+            "weak_topics": [
+              "链表",
+              "指针"
             ],
-            "conclusion": "方法不当（理解未内化，看得懂但写不出）"
-          }
-        },
-        {
-          "task_id": "ds_1_catchup",
-          "subject": "数据结构",
-          "level": "catch_up",
-          "before": "（无独立补欠任务）",
-          "after": "数据结构：补欠专项：①错题回顾 30min ②指针基础专项 30min（共 1.0h），1.0h",
-          "reason": "本周拖延代价 2.5h（5 次），超过阈值 2.0h，为 数据结构 新增 1.0h 补欠任务，与主任务合计 2.0h，但拆成 4 个 ≤30min 子步骤，降低启动门槛。",
-          "evidence": {
-            "consecutive_failures": 3,
-            "completion_rate": 0.0,
-            "reflection_quotes": [
-              "时间不够，写到一半就困了，明天补。",
-              "单链表插入删除还是卡，感觉是方法不对。"
-            ],
-            "conclusion": "拖延代价 2.5h，安排 1.0h 独立补欠任务"
+            "emotion": "疲惫",
+            "evidence_source": "近 5 条反思 + 连续 3 天失败",
+            "conclusion": "方法不当"
           }
         }
       ]
@@ -495,17 +433,21 @@
           "task_id": "ds_1",
           "subject": "数据结构",
           "level": "downgrade",
-          "before": "数据结构：单链表的插入与删除（拆分：①看讲解视频 30min ②做 2 道基础题 30min），1.0h",
-          "after": "数据结构：单链表的插入与删除（拆分：①看讲解视频 30min ②做 2 道基础题 30min） → 降级为『知识点概念梳理 + 错题回顾』，0.5h",
+          "before": "数据结构：看王道视频 30min + 做课后题 30min，共 1.0h",
+          "after": "数据结构：看王道视频 30min + 做课后题 30min → 降级为『知识点概念梳理 + 错题回顾』，共 0.5h",
           "reason": "连续失败 ≥5 天且严重度 high，判定当前难度超过现有能力，降低内容难度并缩短时长。",
           "evidence": {
             "consecutive_failures": 5,
             "completion_rate": 0.0,
-            "reflection_quotes": [
-              "单链表插入删除还是卡，感觉是方法不对。",
-              "拆分后还是没做完，视频看了题做不出来。"
+            "primary_cause": "方法不当",
+            "secondary_cause": "精力不足",
+            "weak_topics": [
+              "链表",
+              "指针"
             ],
-            "conclusion": "方法不当（理解未内化，看得懂但写不出）"
+            "emotion": "疲惫",
+            "evidence_source": "近 6 条反思 + 连续 5 天失败",
+            "conclusion": "方法不当"
           }
         }
       ]
@@ -518,16 +460,20 @@
           "task_id": "ds_1",
           "subject": "数据结构",
           "level": "escalation",
-          "before": "数据结构：单链表的插入与删除（拆分：①看讲解视频 30min ②做 2 道基础题 30min） → 降级为『知识点概念梳理 + 错题回顾』，0.5h",
-          "after": "数据结构：暂停原任务：改为『知识点概念梳理 + 错题回顾』，0.5h",
+          "before": "数据结构：看王道视频 30min + 做课后题 30min → 降级为『知识点概念梳理 + 错题回顾』，共 0.5h",
+          "after": "数据结构：暂停原任务：改为『知识点概念梳理 + 错题回顾』，共 0.5h",
           "reason": "已连续重规划 2 次仍未改善，触发兜底：先换任务类型（从『刷题推进』转为『概念梳理 + 错题回顾』），再给出三个方向供用户选择——A 换路径：补上指针/链表基础再回到原计划（推荐）；B 降目标：降低近期目标难度，把进度顺延到寒假；C 审视目标：结合时间投入重新审视考研目标本身。推荐 A：用最小代价补齐短板，不牺牲整体进度。",
           "evidence": {
             "consecutive_failures": 6,
             "completion_rate": 0.0,
-            "reflection_quotes": [
-              "拆分后还是没做完，视频看了题做不出来。",
-              "连续一周没完成了，开始怀疑考研计划是不是定太高了。"
+            "primary_cause": "方法不当",
+            "secondary_cause": "精力不足",
+            "weak_topics": [
+              "链表",
+              "指针"
             ],
+            "emotion": "疲惫",
+            "evidence_source": "近 7 条反思 + 连续 6 天失败",
             "conclusion": "连续重规划 2 次仍未改善，触发兜底（推荐方向 A）",
             "replan_count": 2
           }
