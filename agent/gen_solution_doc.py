@@ -158,7 +158,7 @@ page_break(doc)
 heading(doc, "图目录", 1)
 for line in ["图 2-1  学习规划痛点分析鱼骨图",
              "图 3-1  系统总体架构图",
-             "图 3-2  六个 Skill 的协作关系图",
+             "图 3-2  八个 Skill 的协作关系图",
              "图 3-3  动态重规划决策流程图",
              "图 5-1  项目实施里程碑甘特图"]:
     para(doc, line, indent=False)
@@ -169,7 +169,7 @@ page_break(doc)
 # ============================================================
 heading(doc, "表目录", 1)
 for line in ["表 2-1  现有学习规划工具对比表",
-             "表 3-1  六个 Skill 的输入输出与调用条件",
+             "表 3-1  八个 Skill 的输入输出与调用条件",
              "表 3-2  赛题 6 个答题点覆盖对照表",
              "表 4-1  团队分工与能力匹配表",
              "表 5-1  项目实施进度安排表"]:
@@ -208,20 +208,22 @@ bullet(doc, "个性化：同样的目标，不同用户的掌握度、可用时�
 
 heading(doc, "1.1.3  解题总体思路", 3)
 para(doc, "我们采用「确定性规则 + LLM 理解 + openJiuwen 调度」三层架构：")
-bullet(doc, "确定性规则层（skills.py）：用 6 个可解释的 Skill 完成诊断、重规划、资源分配、冲突处理。")
+bullet(doc, "确定性规则层（skills.py）：用 8 个可解释的 Skill 完成诊断、重规划、资源分配、冲突处理、目标拆解、资源聚合。")
 bullet(doc, "LLM 理解层：用大语言模型理解用户的自然语言反思，把碎碎念转化为结构化信号。")
-bullet(doc, "openJiuwen 调度层：用 ReActAgent 编排 6 个 Skill，决定何时调用、如何组合。")
+bullet(doc, "openJiuwen 调度层：用 ReActAgent 编排 8 个 Skill，决定何时调用、如何组合。")
 para(doc, "核心哲学是：规则保证可解释与稳定，LLM 保证能听懂人话，openJiuwen 保证两者协同工作。")
 
 heading(doc, "1.2  解决方案概述", 2)
 heading(doc, "1.2.1  核心方案内容", 3)
-para(doc, "本方案实现了 6 个 Skill：")
+para(doc, "本方案实现了 8 个 Skill：")
 bullet(doc, "diagnose（学习诊断）：检测科目是否连续失败、完成率是否过低、拖延是否超限。")
 bullet(doc, "replan（动态重规划）：根据诊断结果调整任务时长、拆分任务、更换学习路径。")
 bullet(doc, "allocate（资源再分配）：当多科冲突时，按权重重新分配每日可用时间。")
 bullet(doc, "interpret_feedback（反馈理解）：把用户反思原文抽取为归因、弱知识点、情绪、建议。")
 bullet(doc, "proactive_scan（事前冲突处理）：预测未来 7 天负荷，提前削峰填谷。")
 bullet(doc, "reschedule_for_calendar_change（课表变动重排）：检测课表变化，自动重排受影响任务。")
+bullet(doc, "decompose_goal（目标拆解）：把「数学一 + 408」大目标拆成需覆盖模块，指出缺口（对应命题痛点「目标不清」）。")
+bullet(doc, "aggregate_resources（资源聚合）：按弱知识点把分散资料收拢成一条补齐路径（对应命题痛点「资源分散」）。")
 
 heading(doc, "1.2.2  方案先进性", 3)
 bullet(doc, "可解释：每一步调整都带 reason 和 evidence，引用具体历史记录。")
@@ -234,10 +236,10 @@ heading(doc, "1.3.1  方案与命题匹配度", 3)
 table(doc,
       ["赛题要求", "本方案对应"],
       [["用户画像与学习记忆", "memory.json 存储画像、打卡记录、掌握度、反思"],
-       ["至少 2 个 Skill", "实现 6 个 Skill"],
+       ["至少 2 个 Skill", "实现 8 个 Skill"],
        ["动态调整案例", "demo 中连续 3 天未完成，触发诊断 + 重规划"],
        ["计划生成前后对比", "demo 打印 [调整前] vs [调整后]，附理由"],
-       ["openJiuwen 作用", "ReActAgent 调度 6 个 Skill，管理 ReAct 循环"],
+       ["openJiuwen 作用", "ReActAgent 调度 8 个 Skill，管理 ReAct 循环"],
        ["个性化与可解释性", "所有调整带 reason/evidence，引用反思原文"]])
 
 heading(doc, "1.3.2  方案可行性", 3)
@@ -291,7 +293,7 @@ para(doc, "本方案定位为「面向长周期学习目标的动态规划 Agent
 heading(doc, "2.2  命题企业分析", 2)
 para(doc, "openJiuwen 是华为支持的开源 AI 智能体（Agent）平台，由华为 2012 实验室、华为云、计算、终端等团队联合打造，提供企业级 AI Agent 的开发、运行与优化能力，采用 Studio / Core / Ops 分层架构，代码以 Apache 2.0 / MIT 等开源协议运营，并提供 GitHub、AtomGit 等代码仓。")
 para(doc, "在算力侧，openJiuwen 与昇腾深度协同，推出「算力亲和」全链路优化技术，通过 Agent Hint 状态契约实现对 KV Cache 的驱逐、卸载、预取等主动调度，实测 Agent 推理首 Token 时延降低 57% 以上、推理存储占用峰值下降 25%；平台还孵化了 JiuwenSwarm（蜂群多智能体框架）、SwarmFlow（多智能体工作流编排）、WorkSwarm（蜂群办公智能体）等组件。")
-para(doc, "命题意图可理解为：以 openJiuwen 为底座，验证「长周期、有记忆、可解释」的个人 Agent 能否在真实学习场景中落地。本方案正是基于 openJiuwen 0.1.18 的 AgentCard + ReActAgentConfig + ReActAgent 新 API 与 @tool 工具装饰器实现，将 6 个 Skill 包装为工具，由 ReActAgent 完成「思考 → 调用 Skill → 观察 → 输出决策日志」的编排闭环。")
+para(doc, "命题意图可理解为：以 openJiuwen 为底座，验证「长周期、有记忆、可解释」的个人 Agent 能否在真实学习场景中落地。本方案正是基于 openJiuwen 0.1.18 的 AgentCard + ReActAgentConfig + ReActAgent 新 API 与 @tool 工具装饰器实现，将 8 个 Skill 包装为工具，由 ReActAgent 完成「思考 → 调用 Skill → 观察 → 输出决策日志」的编排闭环。")
 
 heading(doc, "2.3  命题需求深度剖析", 2)
 heading(doc, "2.3.1  命题表面需求", 3)
@@ -369,8 +371,8 @@ for line in ["用户打卡 → memory.json 更新",
     para(doc, line, indent=False)
 
 heading(doc, "3.2.2  核心技术/方法", 3)
-para(doc, "六个 Skill 的输入、输出与调用条件：")
-caption(doc, "表 3-1  六个 Skill 的输入输出与调用条件")
+para(doc, "八个 Skill 的输入、输出与调用条件：")
+caption(doc, "表 3-1  八个 Skill 的输入输出与调用条件")
 table(doc,
       ["Skill", "输入", "输出", "调用条件"],
       [["diagnose", "learning_memory", "预警科目 + 严重度 + 归因", "连续失败 ≥3 天或完成率 <50%"],
@@ -378,7 +380,9 @@ table(doc,
        ["allocate", "各科权重 + daily_available_hours", "各科分配时长", "总计划 > 可用时长 或 ≥2 科预警"],
        ["interpret_feedback", "反思原文", "归因 + 弱知识点 + 情绪 + 建议", "每次新反思写入时"],
        ["proactive_scan", "未来 7 天课表 + 计划负荷", "削峰填谷方案", "每日生成计划前"],
-       ["reschedule_for_calendar_change", "旧课表 + 新课表", "重排后的任务", "课表 version 变化时"]])
+       ["reschedule_for_calendar_change", "旧课表 + 新课表", "重排后的任务", "课表 version 变化时"],
+       ["decompose_goal", "user_profile（目标/日期）+ current_plan", "需覆盖模块 / 缺口 / 三阶段里程碑", "生成新计划前，检查大目标是否拆全"],
+       ["aggregate_resources", "弱知识点列表 weak_topics", "每弱项的资源清单 + 补齐路径", "诊断出弱知识点后收拢资料"]])
 
 heading(doc, "3.2.3  技术创新点", 3)
 bullet(doc, "补欠拆分为独立任务：不把补欠加在主任务上，避免「一边减负一边加量」的矛盾。")
@@ -391,7 +395,7 @@ heading(doc, "3.3  实施方案", 2)
 heading(doc, "3.3.1  实施路线图", 3)
 para(doc, "已完成阶段：", bold=True)
 bullet(doc, "memory.json 数据结构设计")
-bullet(doc, "skills.py 六个 Skill 实现")
+bullet(doc, "skills.py 八个 Skill 实现")
 bullet(doc, "agent.py openJiuwen 调度")
 bullet(doc, "demo.py 逐日演示脚本")
 bullet(doc, "HTML 打卡系统（用户界面）")
@@ -411,6 +415,9 @@ bullet(doc, "升级① allocate：多科冲突 → 资源再分配")
 bullet(doc, "升级② interpret_feedback：自然语言反思 → 结构化信号")
 bullet(doc, "升级⑤ proactive_scan：未来 7 天负荷可视化 + 削峰填谷")
 bullet(doc, "升级⑦ reschedule：课表变动 → 自动重排")
+bullet(doc, "升级⑧ decompose_goal：目标拆解 → 覆盖缺口（对应命题痛点「目标不清」）")
+bullet(doc, "升级⑨ aggregate_resources：弱知识点 → 资源清单（对应命题痛点「资源分散」）")
+bullet(doc, "真实闭环演示：前端打卡 → /api/export_memory → /api/diagnose → /api/replan → 前端展示")
 
 heading(doc, "3.3.3  资源配置方案", 3)
 bullet(doc, "技术资源：本地 Python 环境 + openJiuwen 框架")
@@ -424,15 +431,15 @@ caption(doc, "表 3-2  赛题 6 个答题点覆盖对照表")
 table(doc,
       ["答题点", "本方案实现"],
       [["① 用户画像与学习记忆", "memory.json 存储画像/打卡/掌握度/反思；demo 的 update_memory_after_checkin 回写"],
-       ["② 至少 2 个 Skill", "实现 6 个 Skill（diagnose/replan/allocate/interpret_feedback/proactive_scan/reschedule）"],
+       ["② 至少 2 个 Skill", "实现 8 个 Skill（diagnose/replan/allocate/interpret_feedback/proactive_scan/reschedule/decompose_goal/aggregate_resources）"],
        ["③ 动态调整案例", "demo Day 3：连续 3 天未完成触发诊断+重规划"],
        ["④ 计划生成前后对比", "demo 打印 [调整前] vs [调整后]，附 reason/evidence"],
-       ["⑤ openJiuwen 作用", "agent.py 用 ReActAgent 包装 6 个 Skill 为 @tool"],
+       ["⑤ openJiuwen 作用", "agent.py 用 ReActAgent 包装 8 个 Skill 为 @tool"],
        ["⑥ 个性化与可解释性", "所有调整引用反思原文，diagnose 输出 primary_cause"]])
 
 heading(doc, "3.4.2  匹配度评估", 3)
 para(doc, "覆盖度：6/6 = 100%。")
-para(doc, "满足程度：不仅满足，还超出（实现 6 个 Skill，远超「至少 2 个」要求）。")
+para(doc, "满足程度：不仅满足，还超出（实现 8 个 Skill，远超「至少 2 个」要求）。")
 
 heading(doc, "3.4.3  可行性论证", 3)
 bullet(doc, "技术可行：已在 CLI 跑通。")
@@ -442,7 +449,7 @@ bullet(doc, "时间可行：答辩前可完成文档与演示。")
 heading(doc, "3.5  创新成效", 2)
 heading(doc, "3.5.1  预期创新成果", 3)
 bullet(doc, "一套可复用的「学习规划 Agent」技术框架。")
-bullet(doc, "六个可迁移的 Skill 设计模式。")
+bullet(doc, "八个可迁移的 Skill 设计模式。")
 bullet(doc, "一份真实的 demo 演示脚本。")
 
 heading(doc, "3.5.2  对 openJiuwen 生态的贡献", 3)
@@ -489,18 +496,18 @@ table(doc,
 
 heading(doc, "4.3  团队与项目的关系", 2)
 heading(doc, "4.3.1  团队投入情况", 3)
-para(doc, "团队利用课余时间与周末集中开发，累计投入约 3–4 周：其中 memory.json 数据结构与 6 个 Skill 实现约 1.5 周，openJiuwen 调度层与 demo 逐日演示约 1 周，HTML 前端与数据对接约 1 周，文档、录屏与答辩彩排约 0.5–1 周。代码与数据均纳入版本管理，可审计、可复现。")
+para(doc, "团队利用课余时间与周末集中开发，累计投入约 3–4 周：其中 memory.json 数据结构与 8 个 Skill 实现约 1.5 周，openJiuwen 调度层与 demo 逐日演示约 1 周，HTML 前端与数据对接约 1 周，文档、录屏与答辩彩排约 0.5–1 周。代码与数据均纳入版本管理，可审计、可复现。")
 heading(doc, "4.3.2  项目真实性", 3)
 para(doc, "demo 可运行、代码可审计、输出可复现。")
 
 heading(doc, "4.4  团队与企业持续合作", 2)
 heading(doc, "4.4.1  合作基础", 3)
-para(doc, "项目全程基于 openJiuwen 官方 SDK（0.1.18）开发，采用其 AgentCard + ReActAgentConfig + ReActAgent 新 API 与 @tool 装饰器完成 6 个 Skill 的工具化注册与 ReAct 编排，并在昇腾社区 / openJiuwen 官方文档指导下完成 Agent 搭建。")
+para(doc, "项目全程基于 openJiuwen 官方 SDK（0.1.18）开发，采用其 AgentCard + ReActAgentConfig + ReActAgent 新 API 与 @tool 装饰器完成 8 个 Skill 的工具化注册与 ReAct 编排，并在昇腾社区 / openJiuwen 官方文档指导下完成 Agent 搭建。")
 heading(doc, "4.4.2  持续合作可能性", 3)
 para(doc, "若项目继续演进，可在三个方向上对接 openJiuwen 生态：")
 bullet(doc, "能力侧：复用 JiuwenSwarm 多智能体框架，把「诊断 / 规划 / 答疑」拆成多 Agent 协作；")
 bullet(doc, "算力侧：对接昇腾「算力亲和」能力，降低 Agent 推理时延，支撑真实场景的高频调用；")
-bullet(doc, "生态侧：把本方案的 6 个 Skill 沉淀为可复用的 openJiuwen 工具/模板，供其他教育类 Agent 开发者参考。")
+bullet(doc, "生态侧：把本方案的 8 个 Skill 沉淀为可复用的 openJiuwen 工具/模板，供其他教育类 Agent 开发者参考。")
 
 heading(doc, "4.5  外部资源", 2)
 para(doc, "指导教师【姓名】（【职称】，研究方向【研究方向】）：在方案设计与答辩策略上提供指导。项目同时受益于 openJiuwen 官方文档、昇腾社区技术文章等开源资源。")
@@ -521,14 +528,14 @@ table(doc,
        ["阶段 2", "答辩前", "文档撰写 + 录屏 + 彩排"],
        ["阶段 3", "答辩后", "接入真实数据 + 多用户支持"]])
 heading(doc, "5.1.2  各阶段目标", 3)
-bullet(doc, "阶段 1：6 个 Skill 全部跑通，demo 输出稳定。")
+bullet(doc, "阶段 1：8 个 Skill 全部跑通，demo 输出稳定。")
 bullet(doc, "阶段 2：解决方案文档完成，答辩稿练熟。")
 bullet(doc, "阶段 3：HTML 系统与 CLI Agent 打通。")
 
 heading(doc, "5.2  关键里程碑", 2)
 heading(doc, "5.2.1  里程碑节点", 3)
 for m in ["M1：memory.json 数据结构完成",
-          "M2：skills.py 六个 Skill 完成",
+          "M2：skills.py 八个 Skill 完成",
           "M3：demo.py 逐日演示跑通",
           "M4：答辩稿完成",
           "M5：现场答辩"]:
@@ -600,7 +607,7 @@ page_break(doc)
 heading(doc, "第七章  附件（佐证材料）", 1)
 
 heading(doc, "7.1  demo.py 运行输出", 2)
-para(doc, "【待附：PDF 截图，包含用户画像、Day 1-6、升级 ①⑤⑦、自检报告。】")
+para(doc, "【待附：PDF 截图，包含用户画像、Day 1-6、升级 ①⑤⑦⑧⑨、真实闭环、自检报告。】")
 
 heading(doc, "7.2  memory.json 数据结构说明", 2)
 para(doc, "【待附：完整 JSON 结构，说明各字段含义。】（可参考 docs/memory_schema.md）")
@@ -610,7 +617,7 @@ para(doc, "项目源码（agent 规则引擎、openJiuwen 调度层、demo 演�
 para(doc, "代码仓库：https://github.com/【用户名】/【仓库名】（请替换为实际 GitHub/Gitee 链接）")
 
 heading(doc, "7.4  demo 演示录屏", 2)
-para(doc, "5 分钟演示录屏覆盖：用户画像 → Day 1–6 逐日推进 → 升级①②⑤⑦ → 系统自检报告 → 6 个答题点对照。")
+para(doc, "5 分钟演示录屏覆盖：用户画像 → Day 1–6 逐日推进 → 升级①②⑤⑦⑧⑨ → 真实闭环 → 系统自检报告 → 6 个答题点对照。")
 para(doc, "录屏链接：【待填写：视频链接 / 网盘链接】")
 
 heading(doc, "7.5  6 个答题点对照表", 2)

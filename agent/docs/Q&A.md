@@ -31,7 +31,7 @@
 具体三件事：
 
 1. **契约**：用 `AgentCard` 声明 Agent 的身份、输入（query）和输出（decision_log）；
-2. **工具化**：用 `@tool` 装饰器把 6 个 Skill（diagnose / replan / allocate / interpret_feedback / proactive_scan / reschedule_for_calendar_change）包装成工具，注册到能力管理器；
+2. **工具化**：用 `@tool` 装饰器把 8 个 Skill（diagnose / replan / allocate / interpret_feedback / proactive_scan / reschedule_for_calendar_change / decompose_goal / aggregate_resources）包装成工具，注册到能力管理器；
 3. **编排**：跑起 ReAct 循环——思考 → 按需调用 Skill → 观察 → … → 由大模型生成带理由、带证据的决策日志。
 
 为什么不用纯 `if-else` 而要上框架：工具调度、循环终止、会话/记忆管理这些工程细节框架都管好了；未来要继续扩展（比如「生成周报」「调整作息」）或拆成多 Agent 协作，框架的扩展成本更低。

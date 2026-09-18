@@ -3,7 +3,7 @@
 agent.py —— 基于 openJiuwen 的「个人学习规划 Agent」（决策层）。
 
 使用 openJiuwen 新 API（AgentCard + ReActAgentConfig + ReActAgent），把
-skills.py 的 6 个 Skill 包装成工具，让 Agent 在 ReAct 循环里自主完成：
+skills.py 的 8 个 Skill 包装成工具，让 Agent 在 ReAct 循环里自主完成：
 
     思考 → 调用 diagnose（学习诊断）→ 观察 → 调用 replan（动态重规划）→ 观察 → 输出决策日志
 
@@ -36,7 +36,9 @@ SYSTEM_PROMPT = (
     "3) allocate_skill 多科目冲突时的全局资源再分配；"
     "4) interpret_feedback_skill 理解用户自然语言反馈；"
     "5) proactive_scan_skill 事前冲突扫描与削峰填谷；"
-    "6) reschedule_for_calendar_change_skill 课表变动时重排受影响任务。"
+    "6) reschedule_for_calendar_change_skill 课表变动时重排受影响任务；"
+    "7) decompose_goal_skill 目标拆解与模块覆盖检查；"
+    "8) aggregate_resources_skill 按弱知识点聚合分散资源。"
     "请基于工具返回的数据，用中文输出一份可解释决策日志，"
     "逐条说明「调整了什么、为什么调整、依据是什么」，只引用工具返回的提炼结论"
     "（主因/次因/弱知识点/情绪），不要搬运或复述反思原文。"
@@ -163,6 +165,27 @@ class LearningPlannerAgent:
                 rules=self.memory.get("rules"),
             )
 
+        # 升级 ⑧：目标拆解（命题背景「目标不清」）——检查大目标是否被完整拆成模块
+        @tool(description=(
+            "目标拆解：把考研大目标拆成知识模块 + 阶段里程碑，检查当前计划的覆盖缺口"
+            "（需覆盖模块 / 已覆盖 / 缺失模块 / 当前阶段 / 建议）。"
+        ))
+        def decompose_goal_skill() -> dict:
+            return skills.decompose_goal(
+                self.memory.get("user_profile", {}),
+                self.memory.get("current_plan", {}),
+                self.memory.get("learning_memory", {}),
+                rules=self.memory.get("rules"),
+            )
+
+        # 升级 ⑨：资源聚合（命题背景「资源分散」）——按弱知识点收拢视频/课后题/错题本/单词本
+        @tool(description=(
+            "资源聚合：按弱知识点把分散资源（视频/课后题/错题本/单词本）收拢成一份补齐清单。"
+            "入参为弱知识点列表。"
+        ))
+        def aggregate_resources_skill(weak_topics: list) -> dict:
+            return skills.aggregate_resources(weak_topics)
+
         # 新 API：AgentCard + ReActAgentConfig + ReActAgent
         config = ReActAgentConfig()
         if self.env["ready"]:
@@ -197,13 +220,15 @@ class LearningPlannerAgent:
 
         agent = ReActAgent(card)
         agent.configure(config)
-        # 注册 6 个 Skill 工具（stateful，绑定到本 agent）
+        # 注册 8 个 Skill 工具（stateful，绑定到本 agent）
         agent.ability_manager.add_ability(diagnose_skill.card, diagnose_skill)
         agent.ability_manager.add_ability(replan_skill.card, replan_skill)
         agent.ability_manager.add_ability(allocate_skill.card, allocate_skill)
         agent.ability_manager.add_ability(interpret_feedback_skill.card, interpret_feedback_skill)
         agent.ability_manager.add_ability(proactive_scan_skill.card, proactive_scan_skill)
         agent.ability_manager.add_ability(reschedule_for_calendar_change_skill.card, reschedule_for_calendar_change_skill)
+        agent.ability_manager.add_ability(decompose_goal_skill.card, decompose_goal_skill)
+        agent.ability_manager.add_ability(aggregate_resources_skill.card, aggregate_resources_skill)
         return agent
 
     # ---------- openJiuwen 编排轨迹捕获：观察 ReAct 循环里的「思考 → 选工具 → 观察」 ----------

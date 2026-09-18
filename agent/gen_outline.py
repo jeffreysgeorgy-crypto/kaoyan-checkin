@@ -176,12 +176,12 @@ h(doc, "1.1.3 解题总体思路（三层架构：规则 + LLM + 调度）", 3)
 p(doc, "采用「感知层 → 记忆层 → 决策层」三层解耦架构：")
 bullet(doc, "感知层：HTML 打卡系统（打卡 / 错题 / 专注 / 单词 / 反思），是学习事实的来源；")
 bullet(doc, "记忆层：memory.json 学习记忆快照（画像 / 计划 / 各科掌握度 / 连续失败 / 反思原文），随打卡动态更新；")
-bullet(doc, "决策层：openJiuwen ReActAgent 调度 6 个确定性 Skill（skills.py），输出可解释的决策与调整。")
-p(doc, "核心原则是「规则负责算对，LLM 负责表达」：6 个 Skill 全部由确定性规则实现，可复现、可审计；LLM 只在 openJiuwen 的 ReAct 循环中按需调度 Skill 并生成决策日志，从根上避免幻觉。")
+bullet(doc, "决策层：openJiuwen ReActAgent 调度 8 个确定性 Skill（skills.py），输出可解释的决策与调整。")
+p(doc, "核心原则是「规则负责算对，LLM 负责表达」：8 个 Skill 全部由确定性规则实现，可复现、可审计；LLM 只在 openJiuwen 的 ReAct 循环中按需调度 Skill 并生成决策日志，从根上避免幻觉。")
 
 h(doc, "1.2 解决方案概述", 2)
-h(doc, "1.2.1 核心方案内容（6 个 Skill）", 3)
-p(doc, "系统提供 6 个可解释 Skill，覆盖学习规划的全生命周期：diagnose（学习诊断）、replan（动态重规划）、allocate（多科目资源再分配）、interpret_feedback（反思理解）、proactive_scan（未来 7 天负荷扫描）、reschedule_for_calendar_change（课表变动重排）。详见第三章 3.2.2。")
+h(doc, "1.2.1 核心方案内容（8 个 Skill）", 3)
+p(doc, "系统提供 8 个可解释 Skill，覆盖学习规划的全生命周期：diagnose（学习诊断）、replan（动态重规划）、allocate（多科目资源再分配）、interpret_feedback（反思理解）、proactive_scan（未来 7 天负荷扫描）、reschedule_for_calendar_change（课表变动重排）、decompose_goal（目标拆解）、aggregate_resources（资源聚合）。详见第三章 3.2.2。")
 h(doc, "1.2.2 方案先进性（可解释、容错、多级兜底）", 3)
 bullet(doc, "可解释：每次调整都带 reason（为什么）与结构化的 evidence（连续失败天数 / 完成率 / 反思原文 / 结论），可审计、可回放；")
 bullet(doc, "容错降级：LLM 不可用（无 key / 超时 / 连续失败）时自动降级为关键词匹配，任何环境都能跑通完整流程；")
@@ -193,7 +193,7 @@ table(doc,
       ["答题点", "方案实现位置"],
       [
           ["① 用户画像与学习记忆存储更新", "memory.json 记忆快照 + 打卡闭环更新（见 3.2.1、7.2）"],
-          ["② 至少 2 个 Skill（输入/输出/调用条件）", "skills.py 提供 6 个 Skill（见 3.2.2）"],
+          ["② 至少 2 个 Skill（输入/输出/调用条件）", "skills.py 提供 8 个 Skill（见 3.2.2）"],
           ["③ 动态调整案例（连续 3 天未完成）", "demo.py 逐日演示（见 3.3.2）"],
           ["④ 学习计划生成前后对比", "adjustments[] 的 before/after/reason/evidence（见 3.3.2）"],
           ["⑤ openJiuwen 承担的作用", "AgentCard + ReActAgent + @tool 编排（见 3.2.1）"],
@@ -233,7 +233,7 @@ table(doc,
       ["答题要求（赛题原文）", "本方案实现"],
       [
           ["必须展示用户学习记忆如何存储与更新", "memory.json 记忆快照 + update_memory_after_checkin 打卡闭环更新"],
-          ["必须设计至少 2 个 Skill，并说明输入、输出和调用条件", "skills.py 提供 6 个 Skill，详见 3.2.2"],
+          ["必须设计至少 2 个 Skill，并说明输入、输出和调用条件", "skills.py 提供 8 个 Skill，详见 3.2.2"],
           ["必须包含一个动态调整案例（例如：用户连续 3 天未完成任务，Agent 如何重规划）", "demo.py Day 3：连续 3 天未完成 → 减少时长 + 拆分任务，详见 3.3.2"],
           ["必须展示学习计划生成前后的对比", "adjustments[] 的 before / after / reason / evidence，详见 3.3.2"],
           ["必须说明 openJiuwen 在其中承担的作用", "AgentCard + ReActAgent + @tool 决策编排层，详见 3.2.1"],
@@ -266,7 +266,7 @@ need(doc, "行业权威数据来源（市场规模 / 增长率，标注出处）
 # 第三章 解决方案（核心）
 # ============================================================
 h(doc, "第三章　解决方案", 1)
-p(doc, "本章为方案核心，重点说明「解题理念、技术方案、6 个 Skill 的输入输出与调用条件、实施方案、需求匹配度」五个方面。")
+p(doc, "本章为方案核心，重点说明「解题理念、技术方案、8 个 Skill 的输入输出与调用条件、实施方案、需求匹配度」五个方面。")
 
 h(doc, "3.1 解题理念与创新思路", 2)
 h(doc, "3.1.1 解题理念（让系统记住用户，让调整有据可查）", 3)
@@ -301,8 +301,8 @@ table(doc,
       ],
       widths=[1.5, 4, 9.5])
 p(doc, "技术栈：Python + FastAPI（后端，9 个 POST 接口）+ openJiuwen（决策编排）+ HTML/JS（前端，localStorage 持久化）+ Supabase（数据，规划中）。")
-h(doc, "3.2.2 核心技术 / 方法（6 个 Skill 详述）", 3)
-p(doc, "6 个 Skill 全部为确定性规则，输入输出与调用条件如下（每个 Skill 单独一节）。")
+h(doc, "3.2.2 核心技术 / 方法（8 个 Skill 详述）", 3)
+p(doc, "8 个 Skill 全部为确定性规则，输入输出与调用条件如下（每个 Skill 单独一节）。其中前 6 个已接入 HTML 前端入口按钮，decompose_goal / aggregate_resources 两个当前由 demo.py 演示，属「引擎已具备、UI 待补」的边界。")
 
 h(doc, "3.2.2.1 Skill 1：diagnose（学习诊断）", 4)
 table(doc,
@@ -370,6 +370,28 @@ table(doc,
       ],
       widths=[3, 12])
 
+h(doc, "3.2.2.7 Skill 7：decompose_goal（目标拆解）", 4)
+table(doc,
+      ["项", "内容"],
+      [
+          ["输入", "user_profile（goal / target_date）+ current_plan + learning_memory（+ rules）"],
+          ["输出", "required_modules（需覆盖模块）/ covered_modules（已覆盖）/ missing_modules（缺失）/ coverage_rate / stages[]（阶段里程碑）/ current_stage / recommendation"],
+          ["调用条件", "生成新计划前，检查「考研大目标」是否被完整拆解（对应命题背景「目标不清」）"],
+          ["关键逻辑", "从目标关键词（数学一 / 数学二 / 408）识别需覆盖的知识模块，对照当前计划科目，指出「目标模块 vs 已覆盖模块」的缺口，并按下剩余天数拆「基础 / 强化 / 冲刺」三阶段里程碑"],
+      ],
+      widths=[3, 12])
+
+h(doc, "3.2.2.8 Skill 8：aggregate_resources（资源聚合）", 4)
+table(doc,
+      ["项", "内容"],
+      [
+          ["输入", "弱知识点列表 weak_topics（来自 diagnose 或 memory）"],
+          ["输出", "每个弱知识点对应的资源清单（视频 / 课后题 / 错题本 / 单词本）+ summary"],
+          ["调用条件", "诊断出弱知识点后，把分散资料收拢到一条补齐路径（对应命题背景「资源分散」）"],
+          ["关键逻辑", "按 RESOURCE_CATALOG 把弱知识点映射到具体资源（视频 / 课后题 / 错题本标签 / 单词本），未命中目录时走兜底资源，把散落的资料按弱项收拢"],
+      ],
+      widths=[3, 12])
+
 h(doc, "3.2.3 技术创新点", 3)
 bullet(doc, "补欠独立：重规划产生的「补欠」任务与常规任务分离，避免挤占正常进度；")
 bullet(doc, "多级兜底：标红 → 拆分减时长 → 降级难度 → 换策略 + 三方向 → 人工确认；")
@@ -378,7 +400,7 @@ bullet(doc, "数据自洽：掌握度公式可回放（raw_data / formula / last
 
 h(doc, "3.3 实施方案", 2)
 h(doc, "3.3.1 实施路线图（已完成 / 答辩 / 后续）", 3)
-bullet(doc, "已完成：memory.json 记忆、6 个 Skill、openJiuwen ReActAgent 调度、demo.py 逐日演示、HTML 前端、FastAPI 后端 9 接口、云端部署方案；")
+bullet(doc, "已完成：memory.json 记忆、8 个 Skill、openJiuwen ReActAgent 调度、demo.py 逐日演示、HTML 前端、FastAPI 后端 9 接口、云端部署方案；")
 bullet(doc, "答辩阶段：demo 演示录屏、解决方案文档、PPT、6 答题点对照表；")
 bullet(doc, "后续：接入 Supabase 多用户、定时触发自动诊断、Web/小程序界面。")
 h(doc, "3.3.2 demo.py 逐日演示说明（对应答题点 ③④）", 3)
@@ -408,7 +430,7 @@ table(doc,
       ["答题点", "方案对应", "实现依据"],
       [
           ["① 记忆存储与更新", "memory.json + 打卡闭环", "update_memory_after_checkin 重算掌握度/连续失败/完成率"],
-          ["② 至少 2 个 Skill", "6 个 Skill", "skills.py，输入/输出/调用条件见 3.2.2"],
+          ["② 至少 2 个 Skill", "8 个 Skill", "skills.py，输入/输出/调用条件见 3.2.2"],
           ["③ 动态调整案例", "连续 3 天未完成 → 减时长+拆分", "demo.py Day 3"],
           ["④ 计划前后对比", "before/after/reason/evidence", "adjustments[] 结构"],
           ["⑤ openJiuwen 作用", "AgentCard + ReActAgent + @tool", "agent.py 决策编排层"],
@@ -457,7 +479,7 @@ table(doc,
       ["里程碑", "内容", "状态"],
       [
           ["M1", "记忆 Schema 与掌握度公式设计", "已完成"],
-          ["M2", "6 个 Skill 规则引擎（skills.py）", "已完成"],
+          ["M2", "8 个 Skill 规则引擎（skills.py）", "已完成"],
           ["M3", "openJiuwen ReActAgent 调度 + demo.py 逐日演示", "已完成"],
           ["M4", "HTML 前端 + FastAPI 后端（9 接口）", "已完成"],
           ["M5", "解决方案文档 / PPT / 录屏 / 答辩演练", "进行中"],
@@ -506,7 +528,7 @@ p(doc, "已具备，见 agent/docs/memory_schema.md：user_profile / current_pla
 h(doc, "7.3 代码仓库链接", 2)
 p(doc, "https://github.com/jeffreysgeorgy-crypto/kaoyan-checkin")
 h(doc, "7.4 demo 演示录屏", 2)
-p(doc, "【待补充：demo 演示录屏（建议 3–5 分钟，覆盖 6 个 Skill）。】")
+p(doc, "【待补充：demo 演示录屏（建议 3–5 分钟，覆盖 8 个 Skill）。】")
 h(doc, "7.5 6 个答题点对照表", 2)
 p(doc, "已具备，见 1.3.1 / 3.4.1 对照表。")
 h(doc, "7.6 HTML 打卡系统演示截图", 2)

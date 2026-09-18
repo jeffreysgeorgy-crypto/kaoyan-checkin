@@ -25,7 +25,7 @@ py demo.py
 ```text
 agent/
 ├── memory.json              # 用户画像 + 学习记忆 + 当前计划 + 规则（初始状态）
-├── skills.py                # 6 个 Skill：diagnose / replan / allocate / interpret_feedback / proactive_scan / reschedule_for_calendar_change，确定性规则
+├── skills.py                # 8 个 Skill：diagnose / replan / allocate / interpret_feedback / proactive_scan / reschedule_for_calendar_change / decompose_goal / aggregate_resources，确定性规则
 ├── agent.py                 # openJiuwen 决策层：AgentCard + ReActAgent + @tool 封装
 ├── server.py                # FastAPI 后端：打通 HTML 前端与 Agent（免手动搬文件）
 ├── requirements.txt         # FastAPI 后端依赖（fastapi / uvicorn / python-multipart / supabase）
@@ -35,7 +35,7 @@ agent/
 ├── .env                     # 模型连接配置
 └── docs/
     ├── memory_schema.md     # 记忆 Schema 与更新机制
-    ├── skill_design.md      # 6 个 Skill 的输入/输出/调用条件
+    ├── skill_design.md      # 8 个 Skill 的输入/输出/调用条件
     ├── adjustment_cases.md  # 动态调整案例（连续 3 天未完成）
     └── Q&A.md               # 评委高频问题与标准答案
 ```
@@ -46,7 +46,7 @@ agent/
 ┌─────────────────────────────────────────────────────┐
 │  openJiuwen 决策层（agent.py）                        │
 │  ReActAgent：思考 → 调用工具 → 观察 → … → 决策日志     │
-│     └─ 6 个 @tool Skill ←──── 规则引擎（skills.py）    │
+│     └─ 8 个 @tool Skill ←──── 规则引擎（skills.py）    │
 └──────────────────────────┬──────────────────────────┘
                            │ 读写
 ┌──────────────────────────▼──────────────────────────┐
@@ -56,7 +56,7 @@ agent/
 ```
 
 - **感知层 + 记忆层**：`memory.json` + `demo.py` 的打卡回写逻辑。
-- **决策层**：openJiuwen `ReActAgent`，把 6 个 Skill 包装成工具自主编排。
+- **决策层**：openJiuwen `ReActAgent`，把 8 个 Skill 包装成工具自主编排。
 - **规则层**：`skills.py` 的确定性规则，保证每一步调整可解释、可审计。
 
 ## HTML + Agent 联动演示（完整产品闭环）
@@ -67,8 +67,8 @@ agent/
 ```text
 ┌─────────────────────────────┐  memory.json   ┌─────────────────────────────┐
 │ HTML 打卡系统（感知 + 记忆）  │ ─────────────► │  CLI Agent（决策层）         │
-│ · 打卡 / 错题 / 专注 / 单词   │                │  · 6 个 Skill 自主编排         │
-│ · 「我的」页 6 个 Skill 入口   │ ◄───────────── │  · 输出 new_plan.json         │
+│ · 打卡 / 错题 / 专注 / 单词   │                │  · 8 个 Skill 自主编排         │
+│ · 「我的」页 8 个 Skill 入口   │ ◄───────────── │  · 输出 new_plan.json         │
 └─────────────────────────────┘  new_plan.json  └─────────────────────────────┘
 ```
 
@@ -328,6 +328,10 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 | 5 | 反馈解析 `interpret_feedback` | 「反思」→ 💬 分析反思 | `POST /api/interpret_feedback` | 归因 / 弱知识点 / 情绪 / 建议 |
 | 6 | 课表变动重排 `reschedule_for_calendar_change` | 「课表」→ 🔄 检测冲突并重排 | `POST /api/reschedule` | 冲突明细 + 新计划 |
 
+> 说明：`skills.py` 另有 2 个 Skill —— 目标拆解 `decompose_goal`（命题背景「目标不清」）与
+> 资源聚合 `aggregate_resources`（命题背景「资源分散」），目前由 `demo.py` 演示
+> （`py demo.py`），尚未接入 HTML 前端按钮，属「引擎已具备、UI 待补」的边界。
+
 **统一体验**（5 条要求全部落地）：
 1. **loading**：点按钮后文字变「⏳ 处理中…」并禁用，请求结束恢复；
 2. **结果卡片**：结果渲染成 `agent-result-card` 卡片（不是 `alert` 弹窗）；
@@ -357,7 +361,7 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 | 答题点 | 实现位置 |
 | --- | --- |
 | ① 用户画像与学习记忆如何存储与更新 | `memory.json` + `demo.py::update_memory_after_checkin` |
-| ② 至少 2 个 Skill | `skills.py` 的 6 个 Skill（详见 `docs/skill_design.md`） |
+| ② 至少 2 个 Skill | `skills.py` 的 8 个 Skill（详见 `docs/skill_design.md`） |
 | ③ 动态调整案例（连续 3 天未完成） | `demo.py` Day 3～6（详见 `docs/adjustment_cases.md`） |
 | ④ 计划生成前后对比 | `demo.py` 的 `[调整前] vs [调整后]` 打印 |
 | ⑤ openJiuwen 的作用 | `agent.py`：AgentCard + ReActAgentConfig + ReActAgent + @tool |

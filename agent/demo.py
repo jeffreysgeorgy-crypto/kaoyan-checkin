@@ -419,6 +419,54 @@ def demo_proactive_scan(memory):
         print(f"补欠池：{result['backlog_note']}")
 
 
+def demo_decompose_goal(memory):
+    """Skill 7：目标拆解（命题背景「目标不清」）——检查大目标是否被完整拆成模块。"""
+    print("\n" + "=" * 72)
+    print("升级 ⑧：目标拆解（Skill: decompose_goal）——命题背景「目标不清」")
+    print("=" * 72)
+    result = skills.decompose_goal(
+        memory["user_profile"], memory["current_plan"], memory["learning_memory"],
+        rules=memory.get("rules"),
+    )
+    print(f"目标：{result['goal']}")
+    print(f"目标日期：{result['target_date']}（剩余 {result['remaining_days']} 天）")
+    print(f"需覆盖模块（{len(result['required_modules'])} 个）：{'、'.join(result['required_modules'])}")
+    print(f"已覆盖模块（{len(result['covered_modules'])} 个）："
+          f"{'、'.join(result['covered_modules']) if result['covered_modules'] else '无'}")
+    if result["missing_modules"]:
+        print(f"⚠️ 缺失模块（目标不清的症结）：{'、'.join(result['missing_modules'])}")
+    if result.get("extra_subjects"):
+        print(f"目标之外的科目（公共课）：{'、'.join(result['extra_subjects'])}")
+    if result["coverage_rate"] is not None:
+        print(f"覆盖率：{result['coverage_rate']:.0%}")
+    print("阶段里程碑（按剩余天数拆基础/强化/冲刺）：")
+    for s in result["stages"]:
+        marker = " ← 当前" if s["name"] == result["current_stage"] else ""
+        print(f"  · {s['name']}：{s['start']} ~ {s['end']}（{s['focus']}）{marker}")
+    print(f"建议：{result['recommendation']}")
+
+
+def demo_aggregate_resources(memory):
+    """Skill 8：资源聚合（命题背景「资源分散」）——按弱知识点收拢视频/课后题/错题本/单词本。"""
+    print("\n" + "=" * 72)
+    print("升级 ⑨：资源聚合（Skill: aggregate_resources）——命题背景「资源分散」")
+    print("=" * 72)
+    # 弱知识点由 diagnose 从反思原文实时提炼（不直接读 memory 的 weak_topics，因为打卡回写不落弱知识点）
+    diag = skills.diagnose(memory["learning_memory"], memory.get("rules"))
+    weak_topics = []
+    for a in diag["alert_subjects"]:
+        for w in a.get("weak_topics", []):
+            if w not in weak_topics:
+                weak_topics.append(w)
+    result = skills.aggregate_resources(weak_topics)
+    print(f"弱知识点：{'、'.join(result['weak_topics']) if result['weak_topics'] else '无'}")
+    for item in result["plan"]:
+        print(f"  · {item['topic']}：")
+        for r in item["resources"]:
+            print(f"      - [{r['type']}] {r['name']}")
+    print(f"总结：{result['summary']}")
+
+
 def _print_reschedule_result(result):
     """打印 reschedule_for_calendar_change 的 5 项必答输出。"""
     print("① 课表变动了什么：")
@@ -578,7 +626,7 @@ def print_division_of_labor():
     print("升级 ⑥：LLM 与 Skill 分工说明")
     print("=" * 72)
     print("┌─ 确定性智能（skills.py）─────────────────────────")
-    print("│  规则引擎：diagnose / replan / allocate / interpret_feedback(降级) / proactive_scan / reschedule_for_calendar_change")
+    print("│  规则引擎：diagnose / replan / allocate / interpret_feedback(降级) / proactive_scan / reschedule_for_calendar_change / decompose_goal / aggregate_resources")
     print("│  特点：可解释、可审计、无 API 也能跑，保证每一步调整有据可查。")
     print("├─ 大语言模型（DeepSeek V4）────────────────────────")
     print("│  ① 理解自然语言：把「反思原文」抽取为 归因/弱知识点/情绪/建议。")
@@ -586,7 +634,7 @@ def print_division_of_labor():
     print("│  特点：处理非结构化输入，但可能幻觉 → 由规则结果兜底约束。")
     print("├─ openJiuwen（调度中枢）───────────────────────────")
     print("│  ReActAgent：思考 → 调用 Skill 工具 → 观察 → 再思考 → 输出决策日志。")
-    print("│  负责在合适时机编排 6 个 Skill、管理 ReAct 循环、把工具结果喂回模型。")
+    print("│  负责在合适时机编排 8 个 Skill、管理 ReAct 循环、把工具结果喂回模型。")
     print("└──────────────────────────────────────────────────")
     print()
     print("一句话总结：这是一个能记住用户状态、应对 6 类变化（失败累积 / 临时事件 / 课表变动 / "
@@ -602,8 +650,8 @@ def print_six_points():
          "memory.json 存储画像/计划/记忆；demo.py 的 update_memory_after_checkin 把每日打卡",
          "回写为 recent_records → 连续失败天数 / 近7天完成率 / 掌握度（按公式重算）→ 反思原文。"),
         ("② 至少 2 个 Skill（输入/输出/调用条件）",
-         "skills.py 现有 6 个 Skill：diagnose 诊断 / replan 重规划 / allocate 资源再分配 /",
-         "interpret_feedback 反馈理解 / proactive_scan 事前冲突处理 / reschedule_for_calendar_change 课表变动重排，调用条件见 docs/skill_design.md。"),
+         "skills.py 现有 8 个 Skill：diagnose / replan / allocate / interpret_feedback /",
+         "proactive_scan / reschedule_for_calendar_change / decompose_goal 目标拆解 / aggregate_resources 资源聚合，调用条件见 docs/skill_design.md。"),
         ("③ 动态调整案例（连续 3 天未完成）",
          "demo.py Day 3：数据结构连续 3 天未完成，触发 diagnose→replan，",
          "减少时长 + 拆分任务 + 拖延代价补欠；Day 5 降级难度、Day 6 换任务类型并给出三个方向（推荐 A）。"),
@@ -612,7 +660,7 @@ def print_six_points():
          "（前后各一组、按科目分色），如 Day 3：1.5h 单链表插入删除 → 1.0h 拆分。"),
         ("⑤ openJiuwen 的作用",
          "agent.py 用 openJiuwen 新 API（AgentCard+ReActAgentConfig+ReActAgent），",
-         "把 6 个 Skill 包装成 @tool；Day 3 打印真实 ReAct 编排轨迹（思考→选工具→观察→输出）。"),
+         "把 8 个 Skill 包装成 @tool；Day 3 打印真实 ReAct 编排轨迹（思考→选工具→观察→输出）。"),
         ("⑥ 个性化与可解释性",
          "调整明细的 reason/evidence 引用历史记录与反思原文，",
          "diagnose 输出 primary_cause 归因，全程可审计。"),
@@ -654,7 +702,7 @@ def print_limitations():
     print("=" * 72)
     limitations = [
         ("① 规则引擎为主，调度粒度仍粗",
-         "6 个 Skill 是确定性规则，阈值（连续失败 3 天 / 完成率 50% / 拖延 2h）为经验值，",
+         "8 个 Skill 是确定性规则，阈值（连续失败 3 天 / 完成率 50% / 拖延 2h）为经验值，",
          "尚未根据个体差异自动标定，面对不同类型用户可能偏保守或偏激进。"),
         ("② 时间安排依赖启发式，非精确排程",
          "课表重排用「就近平移 + 空闲窗口」启发式，未做约束求解（如 CSCP/整数规划），",
@@ -803,10 +851,13 @@ async def main():
     # ===== 真实闭环演示：前端打卡 → server.py → 前端展示（补充脚本回放之外的 HTTP 闭环） =====
     demo_real_loop()
 
-    # ===== 六大升级独立演示（③④已在逐日演示中体现：④打印[调整前]vs[调整后]、③补欠时段） =====
+    # ===== 升级独立演示（① allocate / ② interpret_feedback / ⑤ proactive_scan / ⑧ decompose_goal / ⑨ aggregate_resources；
+    #      ⑦ reschedule 已在逐日演示 Day 5 触发；③④ 已在逐日演示中体现：④打印[调整前]vs[调整后]、③补欠时段） =====
     demo_allocate(memory)
     demo_interpret_feedback(planner)
     demo_proactive_scan(memory)
+    demo_decompose_goal(memory)
+    demo_aggregate_resources(memory)
 
     save_snapshot(memory)
     print(f"\n最终记忆快照已写入 {os.path.basename(SNAPSHOT_PATH)}")

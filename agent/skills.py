@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-skills.py —— 6 个可解释 Skill（技能）：诊断 diagnose / 重规划 replan / 资源再分配 allocate /
-反馈理解 interpret_feedback / 负荷扫描 proactive_scan / 课表重排 reschedule_for_calendar_change。
+skills.py —— 8 个可解释 Skill（技能）：诊断 diagnose / 重规划 replan / 资源再分配 allocate /
+反馈理解 interpret_feedback / 负荷扫描 proactive_scan / 课表重排 reschedule_for_calendar_change /
+目标拆解 decompose_goal / 资源聚合 aggregate_resources。
 
 设计原则：Skill 是「可解释的确定性规则引擎」，不依赖 LLM，输入/输出都是纯数据，
 便于审计、复现与单元测试。openJiuwen 的 ReActAgent 在 agent.py 里把它们包装成
@@ -36,12 +37,22 @@ Skill 6：reschedule_for_calendar_change(old_schedule, new_schedule, current_pla
     输入：旧课表 + 新课表 + 当前计划 + 学习记忆
     输出：受影响任务 + 重排后计划 + 说明
     调用条件：课表 version 变化时自动触发（version 相同则不重排）。
+
+Skill 7：decompose_goal(user_profile, current_plan, learning_memory, rules=None)
+    输入：用户画像（goal / target_date）+ 当前计划 + 学习记忆
+    输出：需覆盖模块 / 已覆盖模块 / 缺失模块 / 阶段里程碑 / 当前阶段 / 可解释建议
+    调用条件：生成计划前，检查「大目标」是否被完整拆解（命题背景「目标不清」）。
+
+Skill 8：aggregate_resources(weak_topics, resource_catalog=None)
+    输入：弱知识点列表（来自 diagnose 或 memory）
+    输出：每个弱知识点对应的资源清单（视频/课后题/错题本/单词本）+ 可解释总结
+    调用条件：诊断出弱知识点后，把分散资源收拢到补齐路径（命题背景「资源分散」）。
 """
 
 import copy
 import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 # 默认规则（与 memory.json 里的 rules 保持一致；调用方也可传入覆盖）
 DEFAULT_RULES = {
@@ -71,6 +82,14 @@ DEFAULT_RULES = {
     },
     "proactive_scan": {
         "overload_factor": 1.2,       # 超载系数（每日可用 × 该系数为负载上限）
+    },
+    # Skill 7：目标拆解（命题背景「目标不清」——把大目标拆成阶段里程碑）
+    "goal": {
+        "stages": [
+            {"name": "基础阶段", "fraction": 0.4, "focus": "覆盖全部知识模块第一轮，打牢基础"},
+            {"name": "强化阶段", "fraction": 0.4, "focus": "分模块刷题，攻克弱知识点"},
+            {"name": "冲刺阶段", "fraction": 0.2, "focus": "真题 + 模拟 + 查漏补缺"},
+        ],
     },
 }
 
@@ -107,6 +126,44 @@ WEAK_TOPIC_KEYWORDS = {
     "极限": "极限", "导数": "导数", "积分": "积分", "中值定理": "中值定理", "泰勒": "泰勒",
     "单词": "单词", "长难句": "长难句",
 }
+
+# Skill 7（目标拆解）：目标关键词 → 需覆盖的知识模块（命题背景「目标不清」）
+GOAL_REQUIRED_MODULES = {
+    "数学一": ["高等数学", "线性代数", "概率论与数理统计"],
+    "数学二": ["高等数学", "线性代数"],
+    "408": ["数据结构", "计算机组成原理", "操作系统", "计算机网络"],
+}
+
+# 当前系统「科目」→ 对应知识模块（用于覆盖检查；「数学」科目当前只规划了高数）
+SUBJECT_TO_MODULE = {
+    "数学": "高等数学",
+    "数据结构": "数据结构",
+    "计算机组成原理": "计算机组成原理",
+    "操作系统": "操作系统",
+    "计算机网络": "计算机网络",
+    "英语": "英语",
+}
+
+# Skill 8（资源聚合）：弱知识点 → 该用的资源（视频/课后题/错题本/单词本），把分散资料收拢
+RESOURCE_CATALOG = {
+    "链表": [("视频", "王道数据结构 · 链表章节"), ("课后题", "王道课后题 · 链表专题"), ("错题本", "错题本『链表』标签")],
+    "指针": [("视频", "C 语言指针专题"), ("课后题", "指针专项练习"), ("错题本", "错题本『指针』标签")],
+    "二叉树": [("视频", "王道数据结构 · 树与二叉树"), ("课后题", "王道课后题 · 树专题"), ("错题本", "错题本『二叉树』标签")],
+    "树": [("视频", "王道数据结构 · 树与二叉树"), ("课后题", "王道课后题 · 树专题"), ("错题本", "错题本『树』标签")],
+    "图": [("视频", "王道数据结构 · 图"), ("课后题", "王道课后题 · 图专题"), ("错题本", "错题本『图』标签")],
+    "存储器": [("视频", "王道计组 · 存储系统"), ("课后题", "王道课后题 · 存储专题"), ("错题本", "错题本『存储』标签")],
+    "Cache": [("视频", "王道计组 · Cache 章节"), ("课后题", "王道课后题 · Cache 专题"), ("错题本", "错题本『Cache』标签")],
+    "极限": [("视频", "高数 · 极限与连续"), ("课后题", "高数课后题 · 极限专题"), ("错题本", "错题本『极限』标签")],
+    "导数": [("视频", "高数 · 导数与微分"), ("课后题", "高数课后题 · 导数专题"), ("错题本", "错题本『导数』标签")],
+    "积分": [("视频", "高数 · 不定/定积分"), ("课后题", "高数课后题 · 积分专题"), ("错题本", "错题本『积分』标签")],
+    "中值定理": [("视频", "高数 · 中值定理"), ("课后题", "高数课后题 · 中值定理专题"), ("错题本", "错题本『中值定理』标签")],
+    "泰勒": [("视频", "高数 · 泰勒公式"), ("课后题", "高数课后题 · 泰勒专题"), ("错题本", "错题本『泰勒』标签")],
+    "单词": [("单词本", "艾宾浩斯单词本 · 复习队列"), ("错题本", "错题本『单词』标签")],
+    "长难句": [("视频", "英语 · 长难句精讲"), ("课后题", "长难句每日一句"), ("错题本", "错题本『长难句』标签")],
+}
+
+# 未命中目录时的兜底资源（仍指向系统自己的三类资源）
+DEFAULT_RESOURCES = [("视频", "对应科目章节视频"), ("课后题", "对应科目课后题"), ("错题本", "错题本对应标签")]
 
 
 def compute_mastery(raw_data):
@@ -1196,3 +1253,139 @@ def reschedule_for_calendar_change(old_schedule, new_schedule, current_plan,
         "allocations": allocations,
         "explanation": explanation,
     }
+
+
+def _build_goal_stages(target_date, today, rules):
+    """按剩余天数拆成 基础/强化/冲刺 三阶段，返回 (stages, current_stage, remaining_days)。"""
+    stage_cfg = (rules or {}).get("goal", {}).get("stages") or [
+        {"name": "基础阶段", "fraction": 0.4, "focus": "覆盖全部知识模块第一轮，打牢基础"},
+        {"name": "强化阶段", "fraction": 0.4, "focus": "分模块刷题，攻克弱知识点"},
+        {"name": "冲刺阶段", "fraction": 0.2, "focus": "真题 + 模拟 + 查漏补缺"},
+    ]
+    try:
+        td = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except Exception:
+        return [], "目标日期未知", None
+    try:
+        t0 = datetime.strptime(today, "%Y-%m-%d").date()
+    except Exception:
+        t0 = date.today()
+    remaining_days = (td - t0).days
+    if remaining_days <= 0:
+        return [], "已到目标日期", remaining_days
+
+    stages = []
+    cursor = t0
+    current_stage = None
+    for i, st in enumerate(stage_cfg):
+        frac = float(st.get("fraction", 0.33))
+        span = max(1, int(round(remaining_days * frac)))
+        end = min(cursor + timedelta(days=span - 1), td)
+        # 最后一阶段强制收尾到目标日期，避免阶段之间留缝
+        if i == len(stage_cfg) - 1:
+            end = td
+        stages.append({
+            "name": st["name"],
+            "start": cursor.isoformat(),
+            "end": end.isoformat(),
+            "focus": st.get("focus", ""),
+        })
+        if current_stage is None and t0 <= end:
+            current_stage = st["name"]
+        cursor = end + timedelta(days=1)
+        if cursor > td:
+            break
+    if current_stage is None and stages:
+        current_stage = stages[-1]["name"]
+    return stages, current_stage, remaining_days
+
+
+def decompose_goal(user_profile, current_plan, learning_memory, rules=None, today=None):
+    """Skill 7：目标拆解。把「考研大目标」拆成知识模块 + 阶段里程碑，检查当前计划覆盖缺口。
+
+    对应命题背景「目标不清」：用户只有「2027 考研」一个抽象目标，不知道还差哪些模块、
+    每个阶段该干什么。本 Skill 把目标拆成可检查的模块清单，并指出当前计划的缺口。
+
+    输入：用户画像（goal / target_date）+ 当前计划 + 学习记忆 + 规则
+    输出：需覆盖模块 / 已覆盖模块 / 缺失模块 / 阶段里程碑 / 当前阶段 / 可解释建议
+    """
+    rules = rules or DEFAULT_RULES
+    goal = (user_profile or {}).get("goal", "")
+    target_date = (user_profile or {}).get("target_date", "")
+    today = today or date.today().isoformat()
+
+    # 1) 从目标关键词识别需覆盖的知识模块
+    required = []
+    for kw, mods in GOAL_REQUIRED_MODULES.items():
+        if kw in goal:
+            for m in mods:
+                if m not in required:
+                    required.append(m)
+
+    # 2) 当前计划里出现的科目模块（含目标之外的公共课，如英语）
+    plan_modules = []
+    for t in (current_plan or {}).get("tasks", []):
+        m = SUBJECT_TO_MODULE.get(t.get("subject"))
+        if m and m not in plan_modules:
+            plan_modules.append(m)
+
+    covered = [m for m in required if m in plan_modules]   # 所需模块中已被覆盖的
+    missing = [m for m in required if m not in plan_modules]
+    extra = [m for m in plan_modules if m not in required]  # 目标之外的科目（英语等），不参与覆盖率
+
+    # 3) 阶段拆解
+    stages, current_stage, remaining_days = _build_goal_stages(target_date, today, rules)
+
+    # 4) 可解释建议
+    if not required:
+        recommendation = (
+            f"未在目标「{goal}」中识别到已知考研科目关键词（数学一/数学二/408），"
+            f"暂无法做模块覆盖检查。当前计划覆盖：{'、'.join(plan_modules) if plan_modules else '无'}。"
+        )
+    elif missing:
+        recommendation = (
+            f"目标需覆盖 {len(required)} 个模块，当前计划仅覆盖 {len(covered)} 个"
+            f"（{'、'.join(covered) if covered else '无'}），缺少：{'、'.join(missing)}。"
+            f"建议在计划中补入这些模块的任务，否则目标可能落空。"
+        )
+    else:
+        recommendation = f"当前计划已覆盖目标全部 {len(required)} 个模块，覆盖完整。"
+
+    return {
+        "goal": goal,
+        "target_date": target_date,
+        "remaining_days": remaining_days,
+        "required_modules": required,
+        "covered_modules": covered,
+        "missing_modules": missing,
+        "extra_subjects": extra,
+        "coverage_rate": round(len(covered) / len(required), 4) if required else None,
+        "stages": stages,
+        "current_stage": current_stage,
+        "recommendation": recommendation,
+    }
+
+
+def aggregate_resources(weak_topics, resource_catalog=None):
+    """Skill 8：资源聚合。把分散资源（视频/课后题/错题本/单词本）按弱知识点收拢成一条清单。
+
+    对应命题背景「资源分散」：视频、讲义、课后题、错题本、单词本散落各处，学生不知道
+    该用什么补弱项。本 Skill 把资源按弱知识点聚合，输出「该弱知识点 → 该用的资源」。
+
+    输入：弱知识点列表（来自 diagnose 或 memory）
+    输出：每个弱知识点对应的资源清单 + 一句可解释总结
+    """
+    catalog = resource_catalog or RESOURCE_CATALOG
+    topics = list(dict.fromkeys(weak_topics or []))  # 去重保序
+    plan = []
+    for topic in topics:
+        res = catalog.get(topic, DEFAULT_RESOURCES)
+        plan.append({"topic": topic, "resources": [{"type": t, "name": n} for t, n in res]})
+    if plan:
+        summary = (
+            "为弱知识点「" + "」「".join(topics) + "」各聚合了视频/课后题/错题本等资源，"
+            "把分散资料收拢到一条可执行的补齐路径上。"
+        )
+    else:
+        summary = "暂无弱知识点，无需聚合资源。"
+    return {"weak_topics": topics, "plan": plan, "summary": summary}

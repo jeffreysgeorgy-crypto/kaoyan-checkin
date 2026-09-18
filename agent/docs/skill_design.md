@@ -1,10 +1,11 @@
 # Skill 设计说明（对应答题点 ②）
 
-Agent 的「决策层」有 **6 个可解释的 Skill**，全部是确定性规则，不依赖 LLM。
+Agent 的「决策层」有 **8 个可解释的 Skill**，全部是确定性规则，不依赖 LLM。
 LLM（DeepSeek V4）只负责在 openJiuwen 的 ReAct 循环里按需调度它们并撰写决策日志。
 
-> 6 个 Skill：diagnose（诊断）/ replan（重规划）/ allocate（资源再分配）/
-> interpret_feedback（反馈理解）/ proactive_scan（负荷扫描）/ reschedule_for_calendar_change（课表重排）。
+> 8 个 Skill：diagnose（诊断）/ replan（重规划）/ allocate（资源再分配）/
+> interpret_feedback（反馈理解）/ proactive_scan（负荷扫描）/ reschedule_for_calendar_change（课表重排）/
+> decompose_goal（目标拆解）/ aggregate_resources（资源聚合）。
 
 ---
 
@@ -106,6 +107,33 @@ weight   = 科目优先级(subject_weights) × 阶段紧迫度(deadline) × 连�
 
 ---
 
+## Skill 7：decompose_goal（目标拆解）
+
+| 项 | 内容 |
+| --- | --- |
+| 输入 | `user_profile`（goal / target_date）+ `current_plan` + `learning_memory`（+ `rules`） |
+| 输出 | `required_modules`（需覆盖模块）/ `covered_modules`（已覆盖）/ `missing_modules`（缺失）/ `coverage_rate` / `stages[]`（阶段里程碑）/ `current_stage` / `recommendation` |
+| 调用条件 | 生成新计划前，检查「考研大目标」是否被完整拆解（命题背景「目标不清」） |
+
+**关键逻辑**（`skills.decompose_goal`）：从目标关键词（数学一 / 数学二 / 408）识别需覆盖的知识模块，
+对照当前计划的科目，指出「目标模块 vs 已覆盖模块」的缺口（如缺少线代、概率论、操作系统、计算机网络），
+并按下剩余天数拆「基础 / 强化 / 冲刺」三阶段里程碑。
+
+---
+
+## Skill 8：aggregate_resources（资源聚合）
+
+| 项 | 内容 |
+| --- | --- |
+| 输入 | 弱知识点列表 `weak_topics`（来自 diagnose 或 memory） |
+| 输出 | 每个弱知识点对应的资源清单（视频 / 课后题 / 错题本 / 单词本）+ `summary` |
+| 调用条件 | 诊断出弱知识点后，把分散资料收拢到一条补齐路径（命题背景「资源分散」） |
+
+**关键逻辑**（`skills.aggregate_resources`）：按 `RESOURCE_CATALOG` 把弱知识点映射到具体资源
+（视频 / 课后题 / 错题本标签 / 单词本），未命中目录时走兜底资源，把散落的资料按弱项收拢。
+
+---
+
 ## 设计取舍
 
 1. **规则引擎 + LLM 编排分离**：调整逻辑是确定性的，可复现、可审计、可单测；
@@ -114,5 +142,6 @@ weight   = 科目优先级(subject_weights) × 阶段紧迫度(deadline) × 连�
    其中 `evidence` 引用连续失败天数、完成率与提炼后的归因结论（主因/次因/弱知识点/情绪），避免「模型瞎编理由」。
 3. **兜底升级**：用 `replan_count` 记录连续重规划次数，避免「同一招反复用」，
    两次后强制换策略并给出三个方向（推荐 A）——这是对「动态调整」的闭环收口。
-4. **6 个 Skill 覆盖全生命周期**：诊断（怎么变差）→ 重规划（怎么改）→ 分配（多科怎么分）→
-   反馈理解（为什么差）→ 负荷扫描（未来会不会超）→ 课表重排（外部变动怎么接）。
+4. **8 个 Skill 覆盖全生命周期**：诊断（怎么变差）→ 重规划（怎么改）→ 分配（多科怎么分）→
+   反馈理解（为什么差）→ 负荷扫描（未来会不会超）→ 课表重排（外部变动怎么接）→
+   目标拆解（目标拆全了没）→ 资源聚合（该用什么资源补）。
