@@ -20,10 +20,11 @@ NATIONAL_HOLIDAY = (date(2026, 10, 1), date(2026, 10, 7))
 
 DAY_START = 7 * 60 + 30   # 07:30
 DAY_END = 22 * 60         # 22:00
+MIN_BLOCK = 20            # 小于此长度的空隙（如课间10分钟）不当作学习块
 EN_DASH = "\u2013"        # –
 CN_SEMI = "\uFF1B"        # ；
 
-# 真实课表（用户提供，周二下午课；周四保留 p2 数字图像处理实验、周五无 p2）：weekday -> [(start, end, weeks)]
+# 真实课表（用户提供，周二下午课；周四保留 p2 数字图像处理实验、周五无 p2）：weekday -> [(period, weeks)]
 def _weeks(spec):
     out = set()
     for part in spec.split(","):
@@ -36,13 +37,13 @@ def _weeks(spec):
     return out
 
 SCHEDULE = {
-    1: [("14:30", "16:10", _weeks("1-16")), ("16:20", "18:00", _weeks("2-17")), ("19:00", "21:00", _weeks("9-16"))],  # 周一
-    2: [("14:30", "16:10", _weeks("2-17"))],                                                                          # 周二（下午习概）
-    3: [("10:10", "11:50", _weeks("1-16")), ("14:30", "16:10", _weeks("1-16")), ("16:20", "18:00", _weeks("2-16"))],  # 周三
-    4: [("08:00", "09:40", _weeks("1-16")), ("10:10", "11:50", _weeks("13-16")), ("14:30", "16:10", _weeks("5-16")), ("16:20", "18:00", _weeks("3,5,7,9,11,13,15-16"))],  # 周四
-    5: [("14:30", "16:10", _weeks("8-15"))],                                                                          # 周五
-    6: [],                                                                                                            # 周六
-    7: [],                                                                                                            # 周日
+    1: [(3, _weeks("1-16")), (4, _weeks("2-17")), (5, _weeks("9-16"))],                                              # 周一
+    2: [(3, _weeks("2-17"))],                                                                                        # 周二（下午习概）
+    3: [(2, _weeks("1-16")), (3, _weeks("1-16")), (4, _weeks("2-16"))],                                              # 周三
+    4: [(1, _weeks("1-16")), (2, _weeks("13-16")), (3, _weeks("5-16")), (4, _weeks("3,5,7,9,11,13,15-16"))],          # 周四
+    5: [(3, _weeks("8-15"))],                                                                                        # 周五
+    6: [],                                                                                                           # 周六
+    7: [],                                                                                                           # 周日
 }
 
 # 每周分配策略（小时），按 weekday(1=周一..7=周日)
@@ -60,9 +61,9 @@ PREFERRED = {
     "major":   [(14 * 60, 18 * 60), (18 * 60, 22 * 60)],
 }
 
-# 课表 schoolNote 用课程名（PERIODS 标准时间；与前端冲突检测一致）
-PERIOD_TIME = {1: ("08:00", "09:40"), 2: ("10:10", "11:50"), 3: ("14:30", "16:10"),
-               4: ("16:20", "18:00"), 5: ("19:00", "21:00")}
+# 大节标准作息（国庆后）；国庆前下午第一节 15:00 上课，故第3/4大节顺延 30 分钟
+PERIOD_TIMES = {1: ("08:00", "09:40"), 2: ("10:10", "11:50"), 3: ("14:30", "16:10"),
+                4: ("16:20", "18:00"), 5: ("19:00", "21:00")}
 COURSE_NOTE = {
     1: {3: "数据分析与可视化", 4: "单片机及接口技术", 5: "自然语言处理技术"},
     2: {3: "习近平新时代中国特色社会主义思想概论"},
@@ -70,6 +71,26 @@ COURSE_NOTE = {
     4: {1: "优化方法", 2: "数字图像处理", 3: "实验课", 4: "实验课"},
     5: {3: "单片机及接口技术"},
 }
+
+
+def _shift_time(t, mins):
+    h, m = t.split(":")
+    x = int(h) * 60 + int(m) + mins
+    return f"{x // 60:02d}:{x % 60:02d}"
+
+
+def is_pre_national(day):
+    """国庆（10-01）之前：下午作息晚 30 分钟（下午第一节 15:00 上课）。"""
+    return day < NATIONAL_HOLIDAY[0]
+
+
+def period_span(period, day):
+    """第 period 大节在该日期的实际起止时间（国庆前第3/4大节顺延 30 分钟）。"""
+    s, e = PERIOD_TIMES[period]
+    if period >= 3 and is_pre_national(day):
+        s = _shift_time(s, 30)
+        e = _shift_time(e, 30)
+    return s, e
 
 
 def to_min(s):
@@ -149,6 +170,8 @@ def place(free, hours, preferred):
     for s, e in ordered:
         if remaining <= 0:
             break
+        if e - s < MIN_BLOCK:
+            continue  # 空隙太小（如10分钟课间）不当作学习块
         cur = s
         while remaining > 0 and cur < e:
             avail = e - cur
@@ -173,28 +196,28 @@ def is_holiday(d):
     return NATIONAL_HOLIDAY[0] <= d <= NATIONAL_HOLIDAY[1]
 
 
-def class_blocks(weekday, week, holiday):
+def class_blocks(weekday, week, holiday, day):
     if holiday or weekday > 5:
         return []
-    return [(to_min(s), to_min(e)) for s, e, weeks in SCHEDULE.get(weekday, []) if week in weeks]
+    blocks = []
+    for period, weeks in SCHEDULE.get(weekday, []):
+        if week in weeks:
+            s, e = period_span(period, day)
+            blocks.append((to_min(s), to_min(e)))
+    return blocks
 
 
-def build_school_note(weekday, week, holiday):
+def build_school_note(weekday, week, holiday, day):
     if holiday:
         return "国庆假期"
     if weekday > 5:
         return "无固定课"
     notes = []
-    for s, e, weeks in SCHEDULE.get(weekday, []):
+    for period, weeks in SCHEDULE.get(weekday, []):
         if week not in weeks:
             continue
-        name = None
-        start_min = to_min(s)
-        for period, (ps, _) in PERIOD_TIME.items():
-            if to_min(ps) == start_min and period in COURSE_NOTE.get(weekday, {}):
-                name = COURSE_NOTE[weekday][period]
-                break
-        name = name or "课程"
+        name = COURSE_NOTE.get(weekday, {}).get(period, "课程")
+        s, e = period_span(period, day)
         notes.append(f"{s}{EN_DASH}{e} {name}")
     return "；".join(notes) if notes else "无固定课"
 
@@ -230,7 +253,7 @@ def main():
         holiday = is_holiday(day)
 
         alloc = allocation(wd)
-        busy = class_blocks(wd, wk, holiday) + parse_time_blocks(d.get("otherTime") or "—")
+        busy = class_blocks(wd, wk, holiday, day) + parse_time_blocks(d.get("otherTime") or "—")
 
         # 顺序放置：英语 → 数学 → 专业课(ds) → 专业课(cs)，每步都把已放块加入 busy
         if (d.get("englishContent") or "—") not in ("—", ""):
@@ -262,7 +285,7 @@ def main():
             d["dsTime"] = "—"
             d["csTime"] = "—"
 
-        d["schoolNote"] = build_school_note(wd, wk, holiday)
+        d["schoolNote"] = build_school_note(wd, wk, holiday, day)
         total = (
             total_hours(d["mathTime"])
             + total_hours(d["dsTime"])
