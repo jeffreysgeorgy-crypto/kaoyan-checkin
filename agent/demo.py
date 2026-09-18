@@ -269,6 +269,59 @@ def print_escalation(structured, replan_no, strategy_change):
         print_evidence(adj["evidence"])
 
 
+def _clip(text, limit=80):
+    """截断超长文本，用于 ReAct 轨迹展示（避免刷屏）。"""
+    text = str(text).replace("\n", " ")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _summarize_observation(tool, result):
+    """把工具的返回结果压缩成一行观察（用于 ReAct 轨迹展示）。"""
+    try:
+        if tool == "diagnose_skill" and isinstance(result, dict):
+            alerts = result.get("alert_subjects", [])
+            if alerts:
+                a = alerts[0]
+                return (f"预警科目 {a['subject']}（严重度 {a['severity']}，"
+                        f"连续失败 {a['consecutive_failures']} 天，主因 {a['primary_cause']}）")
+            return f"整体状态 {result.get('overall_status')}，无预警科目"
+        if tool == "replan_skill" and isinstance(result, dict):
+            adjs = result.get("adjustments", [])
+            if adjs:
+                adj = adjs[0]
+                return f"调整 {len(adjs)} 条：{adj['subject']}「{adj['before']}」→「{adj['after']}」"
+            return "无调整（未触发重规划）"
+        if isinstance(result, dict):
+            keys = "、".join(list(result.keys())[:5])
+            return f"返回 {keys} 等字段"
+        return _clip(result)
+    except Exception:
+        return _clip(result)
+
+
+def print_trace(trace):
+    """打印 openJiuwen ReAct 编排轨迹（思考 → 选工具 → 观察 → 输出），对应答题点⑤。"""
+    print("\n【openJiuwen ReAct 编排轨迹（思考 → 选工具 → 观察 → 输出）】")
+    if not trace:
+        print("  （本次未配置 LLM，走确定性降级，无 ReAct 轨迹——确定性结果仍完整可复现）")
+        return
+    for step in trace:
+        it = step.get("iteration", 0)
+        if step.get("step") == "thinking":
+            if step.get("reasoning"):
+                print(f"  [第{it}轮·思考] {_clip(step['reasoning'])}")
+            if step.get("plan"):
+                names = "、".join(p["name"] for p in step["plan"])
+                print(f"  [第{it}轮·决策] 模型决定调用工具：{names}")
+            if step.get("answer"):
+                print(f"  [第{it}轮·输出] 生成最终决策日志（{len(step['answer'])} 字）")
+        elif step.get("step") == "tool_call":
+            obs = _summarize_observation(step.get("tool"), step.get("observation"))
+            print(f"  [第{it}轮·观察] 调用 {step.get('tool')} → {obs}")
+    print("  （说明：工具本身是 skills.py 确定性规则，保证数字正确可复现；"
+          "openJiuwen 负责 ReAct 循环编排——执行工具、把观察喂回模型、收敛到最终日志。）")
+
+
 def demo_allocate(memory):
     """升级 ①：多科目冲突 → 全局资源再分配（构造一个 3 科冲突场景演示）。"""
     import copy
@@ -482,7 +535,7 @@ def print_six_points():
          "（前后各一组、按科目分色），如 Day 3：1.5h 单链表插入删除 → 1.0h 拆分。"),
         ("⑤ openJiuwen 的作用",
          "agent.py 用 openJiuwen 新 API（AgentCard+ReActAgentConfig+ReActAgent），",
-         "把 6 个 Skill 包装成 @tool，在 ReAct 循环里自主编排并生成决策日志。"),
+         "把 6 个 Skill 包装成 @tool；Day 3 打印真实 ReAct 编排轨迹（思考→选工具→观察→输出）。"),
         ("⑥ 个性化与可解释性",
          "调整明细的 reason/evidence 引用历史记录与反思原文，",
          "diagnose 输出 primary_cause 归因，全程可审计。"),
@@ -609,6 +662,7 @@ async def main():
             print("  · 剩余 1.5h 欠账顺延到下周，避免雪崩式堆积")
             memory["current_plan"] = decision["new_plan"]
             append_replan_log(memory, decision, d)
+            print_trace(decision.get("trace"))
             print("\n【openJiuwen Agent 决策日志（可解释性）】")
             print(decision["decision_log"])
 

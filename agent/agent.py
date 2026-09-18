@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 
 from openjiuwen.core.single_agent import ReActAgent, ReActAgentConfig
 from openjiuwen.core.single_agent.schema.agent_card import AgentCard
+from openjiuwen.core.single_agent.rail.base import AgentCallbackEvent
 from openjiuwen.core.foundation.tool import tool
 
 import skills
@@ -81,6 +82,8 @@ class LearningPlannerAgent:
         self.env = _load_env()
         self._llm_fail_streak = 0     # interpret_feedback 的连续失败计数（≥3 次触发降级）
         self.agent = self._build_agent()
+        self.trace = []               # ReAct 编排轨迹：思考 → 选工具 → 观察 → 输出
+        self._trace_hooks_registered = False
 
     # ---------- 工具：用闭包绑定当前 memory，读取最新状态 ----------
     def _build_agent(self):
@@ -203,6 +206,56 @@ class LearningPlannerAgent:
         agent.ability_manager.add_ability(reschedule_for_calendar_change_skill.card, reschedule_for_calendar_change_skill)
         return agent
 
+    # ---------- openJiuwen 编排轨迹捕获：观察 ReAct 循环里的「思考 → 选工具 → 观察」 ----------
+    async def _ensure_trace_hooks(self):
+        """注册 openJiuwen 回调，把 ReAct 循环的真实编排轨迹记录到 self.trace。
+
+        只用于演示/审计「openJiuwen 承担的作用」，不改变任何确定性结果。
+        回调内部全部 try/except，绝不让轨迹捕获打断主流程。
+        """
+        if self._trace_hooks_registered:
+            return
+
+        def _on_after_model_call(ctx):
+            try:
+                inputs = getattr(ctx, "inputs", None)
+                resp = getattr(inputs, "response", None)
+                if resp is None:
+                    return
+                step = {"step": "thinking", "iteration": getattr(inputs, "react_iteration", 0)}
+                reasoning = getattr(resp, "reasoning_content", None)
+                if reasoning:
+                    step["reasoning"] = reasoning
+                tool_calls = getattr(resp, "tool_calls", None)
+                if tool_calls:
+                    step["plan"] = [
+                        {"name": getattr(tc, "name", "?"), "arguments": getattr(tc, "arguments", "")}
+                        for tc in tool_calls
+                    ]
+                content = getattr(resp, "content", None)
+                if content and not tool_calls:
+                    step["answer"] = content
+                self.trace.append(step)
+            except Exception:
+                pass
+
+        def _on_after_tool_call(ctx):
+            try:
+                inputs = getattr(ctx, "inputs", None)
+                self.trace.append({
+                    "step": "tool_call",
+                    "iteration": getattr(inputs, "react_iteration", 0),
+                    "tool": getattr(inputs, "tool_name", "?"),
+                    "arguments": getattr(inputs, "tool_args", None),
+                    "observation": getattr(inputs, "tool_result", None),
+                })
+            except Exception:
+                pass
+
+        await self.agent.register_callback(AgentCallbackEvent.AFTER_MODEL_CALL, _on_after_model_call, priority=200)
+        await self.agent.register_callback(AgentCallbackEvent.AFTER_TOOL_CALL, _on_after_tool_call, priority=200)
+        self._trace_hooks_registered = True
+
     # ---------- 确定性 Skill 执行：保证 demo 即使无 LLM 也能跑通 ----------
     def run_skills(self):
         """直接执行核心的两个 Skill（diagnose + replan），返回结构化结果（用于打印调整前后对比）。"""
@@ -319,21 +372,24 @@ class LearningPlannerAgent:
     async def decide(self, query):
         """决策入口：先确定性执行 Skill（保证数据正确），再调用 openJiuwen 生成决策日志。"""
         structured = self.run_skills()
+        self.trace = []  # 清空上一次调用的编排轨迹
 
         if not self.env["ready"]:
-            return {**structured, "decision_log": self._deterministic_log(structured), "used_llm": False}
+            return {**structured, "decision_log": self._deterministic_log(structured), "used_llm": False, "trace": []}
 
         try:
+            await self._ensure_trace_hooks()
             result = await self.agent.invoke({"query": query})
             output = result.get("output", "")
             if result.get("result_type") == "error" or not output:
-                return {**structured, "decision_log": self._deterministic_log(structured), "used_llm": False}
-            return {**structured, "decision_log": output, "used_llm": True}
+                return {**structured, "decision_log": self._deterministic_log(structured), "used_llm": False, "trace": self.trace}
+            return {**structured, "decision_log": output, "used_llm": True, "trace": self.trace}
         except Exception as exc:  # 网络 / API 异常时降级，保证 demo 能跑完
             return {
                 **structured,
                 "decision_log": self._deterministic_log(structured) + f"\n（LLM 调用失败：{exc}）",
                 "used_llm": False,
+                "trace": self.trace,
             }
 
 
