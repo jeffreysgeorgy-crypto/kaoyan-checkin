@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-skills.py —— 两个核心 Skill（技能）：学习诊断 diagnose 与 动态重规划 replan。
+skills.py —— 6 个可解释 Skill（技能）：诊断 diagnose / 重规划 replan / 资源再分配 allocate /
+反馈理解 interpret_feedback / 负荷扫描 proactive_scan / 课表重排 reschedule_for_calendar_change。
 
 设计原则：Skill 是「可解释的确定性规则引擎」，不依赖 LLM，输入/输出都是纯数据，
 便于审计、复现与单元测试。openJiuwen 的 ReActAgent 在 agent.py 里把它们包装成
@@ -15,6 +16,26 @@ Skill 2：replan(current_plan, diagnosis, learning_memory, replan_count=0)
     输入：当前计划 + 诊断结果 + 学习记忆 + 已重规划次数
     输出：(新计划, 调整明细列表)，调整明细含 task_id / before / after / reason / evidence
     调用条件：诊断出预警科目后，对计划做针对性调整。
+
+Skill 3：allocate(learning_memory, current_plan, daily_available_hours)
+    输入：学习记忆 + 当前计划 + 每日可用时长
+    输出：每科分配时长 + 可解释分配理由（weight = 优先级 × 阶段紧迫度 × 连续失败严重度）
+    调用条件：总负荷超可用时长，或 ≥2 科预警。
+
+Skill 4：interpret_feedback(text, llm_text=None)
+    输入：用户反思 / 碎碎念原文（可选 LLM 返回 JSON）
+    输出：结构化信号（主因 / 次因 / 弱知识点 / 情绪 / 提炼结论 / 来源）
+    调用条件：用户提交反思原文时（优先 LLM 抽取，失败降级关键词匹配）。
+
+Skill 5：proactive_scan(days, backlog=0, daily_available_hours)
+    输入：未来 7 天计划负荷 + 积压错题数 + 每日可用时长
+    输出：逐日负荷评估 + 削峰填谷方案 + 降级决策（负载上限 = 可用时长 × 1.2）
+    调用条件：计划生成后，需要事前负荷预测时。
+
+Skill 6：reschedule_for_calendar_change(old_schedule, new_schedule, current_plan, learning_memory)
+    输入：旧课表 + 新课表 + 当前计划 + 学习记忆
+    输出：受影响任务 + 重排后计划 + 说明
+    调用条件：课表 version 变化时自动触发（version 相同则不重排）。
 """
 
 import copy

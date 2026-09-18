@@ -25,7 +25,7 @@ py demo.py
 ```text
 agent/
 ├── memory.json              # 用户画像 + 学习记忆 + 当前计划 + 规则（初始状态）
-├── skills.py                # 两个 Skill：diagnose（诊断）/ replan（重规划），确定性规则
+├── skills.py                # 6 个 Skill：diagnose / replan / allocate / interpret_feedback / proactive_scan / reschedule_for_calendar_change，确定性规则
 ├── agent.py                 # openJiuwen 决策层：AgentCard + ReActAgent + @tool 封装
 ├── server.py                # FastAPI 后端：打通 HTML 前端与 Agent（免手动搬文件）
 ├── requirements.txt         # FastAPI 后端依赖（fastapi / uvicorn / python-multipart / supabase）
@@ -35,7 +35,7 @@ agent/
 ├── .env                     # 模型连接配置
 └── docs/
     ├── memory_schema.md     # 记忆 Schema 与更新机制
-    ├── skill_design.md      # 两个 Skill 的输入/输出/调用条件
+    ├── skill_design.md      # 6 个 Skill 的输入/输出/调用条件
     ├── adjustment_cases.md  # 动态调整案例（连续 3 天未完成）
     └── Q&A.md               # 评委高频问题与标准答案
 ```
@@ -46,9 +46,8 @@ agent/
 ┌─────────────────────────────────────────────────────┐
 │  openJiuwen 决策层（agent.py）                        │
 │  ReActAgent：思考 → 调用工具 → 观察 → … → 决策日志     │
-│     ├─ @tool diagnose  ←──┐                         │
-│     └─ @tool replan    ←──┼── 规则引擎（skills.py）    │
-└──────────────────────────┼──────────────────────────┘
+│     └─ 6 个 @tool Skill ←──── 规则引擎（skills.py）    │
+└──────────────────────────┬──────────────────────────┘
                            │ 读写
 ┌──────────────────────────▼──────────────────────────┐
 │  学习记忆（memory.json）                              │
@@ -57,7 +56,7 @@ agent/
 ```
 
 - **感知层 + 记忆层**：`memory.json` + `demo.py` 的打卡回写逻辑。
-- **决策层**：openJiuwen `ReActAgent`，把两个 Skill 包装成工具自主编排。
+- **决策层**：openJiuwen `ReActAgent`，把 6 个 Skill 包装成工具自主编排。
 - **规则层**：`skills.py` 的确定性规则，保证每一步调整可解释、可审计。
 
 ## HTML + Agent 联动演示（完整产品闭环）
@@ -68,8 +67,8 @@ agent/
 ```text
 ┌─────────────────────────────┐  memory.json   ┌─────────────────────────────┐
 │ HTML 打卡系统（感知 + 记忆）  │ ─────────────► │  CLI Agent（决策层）         │
-│ · 打卡 / 错题 / 专注 / 单词   │                │  · diagnose + replan         │
-│ · 「我的」页两个联动按钮       │ ◄───────────── │  · 输出 new_plan.json         │
+│ · 打卡 / 错题 / 专注 / 单词   │                │  · 6 个 Skill 自主编排         │
+│ · 「我的」页 6 个 Skill 入口   │ ◄───────────── │  · 输出 new_plan.json         │
 └─────────────────────────────┘  new_plan.json  └─────────────────────────────┘
 ```
 
@@ -167,7 +166,9 @@ openjiuwen 缺失都能稳定返回完整的 `reason` + `evidence`，天然满�
 5. （可选）📷 上传错题照片 → 后端 uploads/（或 Supabase Storage）出现带时间戳的图片文件
 ```
 
-## 手机访问完整步骤（内网穿透，电脑需开机）
+## 手机访问完整步骤（内网穿透，电脑需开机）—— 当前实际部署方式
+
+> **当前实际运行方式**：后端跑在本机（`uvicorn 8000`），cpolar 内网穿透让手机访问；数据存 Supabase（已配置，见 .env），未配置时降级本地文件。下方「云端部署」是规划中的 7×24 方案，**尚未实际启用**。
 
 后端顺带托管前端（同源），所以只需**一个 cpolar 隧道**，手机打开一个地址即可，无需配置后端地址。
 
@@ -189,7 +190,10 @@ openjiuwen 缺失都能稳定返回完整的 `reason` + `evidence`，天然满�
 > - 后端 CORS 已放开；前端后端同源，云端/隧道访问时 `BACKEND_URL` 自动走同源相对路径，**无需填「后端地址」**。
 > - 电脑必须保持开机（后端 + cpolar 都跑在电脑上）。
 
-## 云端部署（手机随时能用，电脑关机也无所谓）
+## 云端部署（规划中 / 备选，未实际启用）
+
+> **状态说明**：本节为 7×24 云端方案，**尚未实际启用**。当前实际运行的是上面的「本地 + cpolar」方式。
+> Supabase 已配置（`SUPABASE_URL` / `SUPABASE_KEY` 已写入 .env），本地后端已在用它存数据；Render 云端托管仅作规划备选，`render.yaml` 已备好但未部署。
 
 后端 + 前端都放 Render、数据放 Supabase，实现 7×24 可用。**前端由后端顺带托管**（同一个
 onrender.com 域名），所以不需要 Vercel（`vercel.app` 在国内被墙）、也不需要配后端地址（同源）。
@@ -353,7 +357,7 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 | 答题点 | 实现位置 |
 | --- | --- |
 | ① 用户画像与学习记忆如何存储与更新 | `memory.json` + `demo.py::update_memory_after_checkin` |
-| ② 至少 2 个 Skill | `skills.py` 的 `diagnose` / `replan`（详见 `docs/skill_design.md`） |
+| ② 至少 2 个 Skill | `skills.py` 的 6 个 Skill（详见 `docs/skill_design.md`） |
 | ③ 动态调整案例（连续 3 天未完成） | `demo.py` Day 3～6（详见 `docs/adjustment_cases.md`） |
 | ④ 计划生成前后对比 | `demo.py` 的 `[调整前] vs [调整后]` 打印 |
 | ⑤ openJiuwen 的作用 | `agent.py`：AgentCard + ReActAgentConfig + ReActAgent + @tool |

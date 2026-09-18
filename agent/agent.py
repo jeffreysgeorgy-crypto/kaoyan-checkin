@@ -3,7 +3,7 @@
 agent.py —— 基于 openJiuwen 的「个人学习规划 Agent」（决策层）。
 
 使用 openJiuwen 新 API（AgentCard + ReActAgentConfig + ReActAgent），把
-skills.py 的两个 Skill 包装成工具，让 Agent 在 ReAct 循环里自主完成：
+skills.py 的 6 个 Skill 包装成工具，让 Agent 在 ReAct 循环里自主完成：
 
     思考 → 调用 diagnose（学习诊断）→ 观察 → 调用 replan（动态重规划）→ 观察 → 输出决策日志
 
@@ -205,7 +205,7 @@ class LearningPlannerAgent:
 
     # ---------- 确定性 Skill 执行：保证 demo 即使无 LLM 也能跑通 ----------
     def run_skills(self):
-        """直接执行两个 Skill，返回结构化结果（用于打印调整前后对比）。"""
+        """直接执行核心的两个 Skill（diagnose + replan），返回结构化结果（用于打印调整前后对比）。"""
         diag = skills.diagnose(
             self.memory.get("learning_memory", {}),
             self.memory.get("rules"),
