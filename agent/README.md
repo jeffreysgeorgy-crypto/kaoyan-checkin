@@ -201,16 +201,17 @@ openjiuwen 缺失都能稳定返回完整的 `reason` + `evidence`，天然满�
 
 ## 云端部署（手机随时能用，电脑关机也无所谓）
 
-把后端放 Render、数据放 Supabase、前端放 Vercel，实现 7×24 可用。核心原因：Render 免费层
-是**临时文件系统**（重新部署会清空本地文件），所以 `memory.json`、上次课表和错题图片都迁到
-Supabase；未配置 Supabase 环境变量时，后端自动降级回本地文件，本地开发不受影响。
+后端 + 前端都放 Render、数据放 Supabase，实现 7×24 可用。**前端由后端顺带托管**（同一个
+onrender.com 域名），所以不需要 Vercel（`vercel.app` 在国内被墙）、也不需要配后端地址（同源）。
+核心原因：Render 免费层是**临时文件系统**（重新部署会清空本地文件），所以 `memory.json`、
+上次课表和错题图片都迁到 Supabase；未配置 Supabase 环境变量时，后端自动降级回本地文件，本地开发不受影响。
 
 ### 1. 代码推到 GitHub
 
 ```bash
 # 在 D:\XX 根目录（.gitignore 已排除 .env / __pycache__ / uploads 等）
 git add -A
-git commit -m "feat: 云端部署（Supabase 存 memory+图片，Render 后端，Vercel 前端）"
+git commit -m "feat: 云端部署（Supabase 存数据，Render 托管前后端）"
 git push origin main
 ```
 
@@ -242,12 +243,12 @@ values ('mistakes', 'mistakes', true)
 on conflict (id) do nothing;
 ```
 
-### 3. Render 部署后端
+### 3. Render 部署（前后端一体）
 
-仓库根目录已带 `render.yaml`（Blueprint），两种方式任选：
+仓库根目录已带 `render.yaml`（Blueprint），后端会顺带托管前端：
 
 **方式 A（推荐，省事）**：Render → New → **Blueprint** → 连接 GitHub 仓库，会自动读 `render.yaml`
-填好 Root Directory / 构建 / 启动命令。部署后到该服务的 **Environment** 标签，手动加两个密钥：
+部署（后端 + 前端一起）。部署后到该服务的 **Environment** 标签，手动加两个密钥：
 
    | 变量 | 值 |
    | --- | --- |
@@ -257,25 +258,20 @@ on conflict (id) do nothing;
    （`VISION_API_KEY` 可选，课表 OCR 用；加完点 Save 会自动重启生效。）
 
 **方式 B（手动）**：Render → New → **Web Service** → 连仓库，
-Root Directory=`agent`、Build=`pip install -r requirements.txt`、
-Start=`uvicorn server:app --host 0.0.0.0 --port $PORT`，再在 Environment 加同样的 `SUPABASE_URL` / `SUPABASE_KEY`。
+Build Command=`cd agent && pip install -r requirements.txt`、
+Start Command=`cd agent && uvicorn server:app --host 0.0.0.0 --port $PORT`，
+再在 Environment 加同样的 `SUPABASE_URL` / `SUPABASE_KEY`。
 
-部署后访问 `https://<服务名>.onrender.com/`，应看到 `{"message":"Agent Server is running"}`。
+健康检查：访问 `https://<服务名>.onrender.com/api/health`，应看到 `{"message":"Agent Server is running"}`。
 
-### 4. Vercel 部署前端
+### 4. 手机访问
 
-1. <https://vercel.com> → Import 同一个仓库。
-2. **Root Directory** 保持仓库根目录（`D:\XX`），它会直接托管 `index.html`（纯静态，无需构建）。
-3. 部署完成后得到 `https://<项目名>.vercel.app`。
+手机浏览器打开 `https://<服务名>.onrender.com/` 直接就是前端首页，**不用填后端地址**（同源）。
+点「📤 导出并发送 Agent」，状态栏变绿即打通。之后电脑关机也能用：数据存 Supabase，换手机打开同地址即同步。
 
-后端地址不用写死在代码里：手机打开 Vercel 地址 →「我的」页 →「后端地址」输入框，
-填第 3 步的 Render 地址（如 `https://xxx.onrender.com`，不带末尾 `/`），点「保存」。
-（首次从云端打开而没设置时，页面会自动弹窗提醒你去「我的」设置。）
-
-### 5. 手机访问
-
-手机浏览器打开 `https://<项目名>.vercel.app` → 按上面填好后端地址 → 点「📤 导出并发送 Agent」，
-状态栏变绿即打通。之后电脑关机也能用：数据存 Supabase，换手机打开同地址（同浏览器账号）即同步。
+> 国内访问提示：`render.com`（官网首页）常被墙，但 `dashboard.render.com`（后台）和
+> `onrender.com`（部署域名）通常可访问；打不开 `render.com` 时直接进 `dashboard.render.com`。
+> 免费版首次请求有几十秒冷启动，属正常。
 
 ## 6 个 Skill 完整演示流程
 

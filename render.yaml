@@ -1,13 +1,15 @@
-# Render Blueprint：New → Blueprint → 连接 GitHub 仓库即可一键部署后端
+# Render Blueprint：New → Blueprint → 连接 GitHub 仓库即可一键部署
+# 单服务方案：后端顺带托管前端（前端在仓库根目录），手机访问同一个 onrender.com 地址即可，
+# 无需 Vercel（vercel.app 在国内被墙），也无需配置后端地址（前端后端同源）。
 # 密钥（SUPABASE_URL / SUPABASE_KEY / VISION_API_KEY）不写进本文件，
 # 部署后在 Render 的 Environment 标签手动添加（详见 agent/README.md「云端部署」章节）。
 services:
   - type: web
     name: kaoyan-agent
     runtime: python
-    rootDir: agent
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    # rootDir 默认仓库根目录：后端在 agent/、前端在根目录，后端要顺带托管前端
+    buildCommand: cd agent && pip install -r requirements.txt
+    startCommand: cd agent && uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
       # 密钥：部署后手动填
       - key: SUPABASE_URL

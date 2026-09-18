@@ -4221,16 +4221,14 @@ function renderMe(state) {
    - 导入：把 Agent 生成的 new_plan.json（current_plan + replanning_log）写回未来计划
    ============================================================ */
 // FastAPI 后端地址（本地开发；部署后改成实际服务地址）
-const BACKEND_URL = localStorage.getItem('BACKEND_URL') || 'http://127.0.0.1:8000';
-
-// 首次从云端/手机访问且尚未设置后端地址时，提醒去「我的」页设置（本机访问默认 127.0.0.1 是对的，不打扰）
-function promptBackendUrlOnce() {
-  if (localStorage.getItem('BACKEND_URL')) return;  // 已设置过
+const BACKEND_URL = (() => {
+  const saved = localStorage.getItem('BACKEND_URL');
+  if (saved) return saved.replace(/\/+$/, '');   // 去末尾斜杠，避免出现 //api 双斜杠
   const host = (location.hostname || '').toLowerCase();
   const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '';
-  if (isLocal) return;  // 本机/文件协议访问，默认地址正确
-  alert('检测到从云端/手机访问，但尚未设置后端地址。\n请进入「我的」页，填写后端地址（Render 地址）后点「保存」。');
-}
+  // 本地开发默认连本机后端；云端部署（前端后端同源，如 Render）默认空串 → 走相对路径 /api/...
+  return isLocal ? 'http://127.0.0.1:8000' : '';
+})();
 
 const AGENT_SUBJECT_MAP = [
   { key: 'math', label: '数学',          timeCol: 'mathTime',    contentCol: 'mathContent',    priority: 'high' },
@@ -5772,7 +5770,6 @@ function init() {
   // 回填后端地址设置框为当前 BACKEND_URL
   const backendUrlInput = document.getElementById('backendUrlInput');
   if (backendUrlInput) backendUrlInput.value = BACKEND_URL;
-  promptBackendUrlOnce();
 
   // 恢复上次运行过的 Skill 结果卡片（localStorage 持久化，刷新不丢）
   renderAgentResults();

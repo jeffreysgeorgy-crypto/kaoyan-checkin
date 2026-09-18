@@ -37,7 +37,7 @@ import requests
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 import skills
 
@@ -47,6 +47,10 @@ NEW_PLAN_PATH = os.path.join(HERE, "new_plan.json")
 SCHEDULE_LAST_PATH = os.path.join(HERE, "schedule_last.json")   # 记住上次课表，供下次 diff 做 old_schedule
 UPLOAD_DIR = os.path.join(HERE, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# 前端静态文件目录：仓库根目录（本地= D:\XX，Render 部署= 仓库根）。后端顺带托管前端，实现同源访问。
+FRONTEND_DIR = os.path.abspath(os.path.join(HERE, ".."))
+_FRONTEND_FILES = {"index.html", "app.js", "style.css", "data.js", "sw.js", "manifest.json", "icon.svg"}
 
 app = FastAPI(title="学习规划 Agent 后端")
 
@@ -276,8 +280,14 @@ def _parse_schedule_images(images):
 
 
 @app.get("/")
+def frontend_index():
+    """根路径返回前端首页（云端同源部署：后端顺带托管前端，免配后端地址）。"""
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+
+@app.get("/api/health")
 def health():
-    """健康检查。"""
+    """健康检查（原 GET / 移到此处，便于命令行验证）。"""
     return {"message": "Agent Server is running"}
 
 
@@ -673,6 +683,14 @@ def parse_schedule(payload: dict):
     except Exception as exc:
         _log(f"[parse_schedule] 错误：{exc}")
         return _err(str(exc))
+
+
+@app.get("/{filename}")
+def frontend_static(filename: str):
+    """按白名单返回前端静态资源；白名单外的路径返回 404，避免暴露 agent/ 后端源码。"""
+    if filename in _FRONTEND_FILES:
+        return FileResponse(os.path.join(FRONTEND_DIR, filename))
+    return JSONResponse(status_code=404, content={"status": "error", "message": "not found"})
 
 
 if __name__ == "__main__":
