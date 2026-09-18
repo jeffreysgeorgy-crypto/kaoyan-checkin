@@ -19,6 +19,7 @@ Skill 2：replan(current_plan, diagnosis, learning_memory, replan_count=0)
 
 import copy
 import math
+import re
 from datetime import date, datetime
 
 # 默认规则（与 memory.json 里的 rules 保持一致；调用方也可传入覆盖）
@@ -211,18 +212,21 @@ def calibrate_slots(task):
     保持原开始时间不变，结束时间 = 开始时间 + planned_hours。
     例：1.5h @20:30-22:00 缩短为 1.0h → @20:30-21:30。
     无时段、时段非法或 planned_hours 缺失时原样返回，避免误改。
+    时段分隔符同时兼容 ASCII 连字符（-）、短横线（–）与破折号（—）。
     """
     slots = task.get("scheduled_slots") or []
-    if not slots or "-" not in slots[0]:
+    if not slots:
         return task
-    start, _ = slots[0].split("-", 1)
+    m = re.match(r"(\d{1,2}:\d{2})\s*[-–—]\s*\d{1,2}:\d{2}", slots[0])
+    if not m:
+        return task
     try:
-        start_min = _hhmm_to_min(start)
+        start_min = _hhmm_to_min(m.group(1))
         hours = float(task.get("planned_hours"))
     except (ValueError, TypeError):
         return task
     end_min = start_min + int(round(hours * 60))
-    task["scheduled_slots"] = [f"{start}-{_min_to_hhmm(end_min)}"]
+    task["scheduled_slots"] = [f"{m.group(1)}-{_min_to_hhmm(end_min)}"]
     return task
 
 
@@ -314,7 +318,9 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None)
         # 严重度高且连续失败恰好 3 天 → 减少时长 + 拆分任务
         elif sev == "high" and fails == 3:
             task["content"] = _split_content(task["content"])
-            task["planned_hours"] = round(task["planned_hours"] - replan_cfg.get("split_reduction", 0.5), 1)
+            reduced = round(task["planned_hours"] - replan_cfg.get("split_reduction", 0.5), 1)
+            # 不小于保底时长，避免 0.5h 的任务被减成 0h（用户反馈：英语 0.5h 拖延两次后变 0h）
+            task["planned_hours"] = max(reduced, rules.get("min_floor", 0.5))
             task["flag"] = "split"
             calibrate_slots(task)  # 时长变化后校准时段（1.5h→1.0h：20:30-22:00 → 20:30-21:30）
             adjustments.append({
@@ -457,6 +463,24 @@ def _should_allocate(learning_memory, current_plan, daily_available_hours, rules
     return (bool(reasons), "；".join(reasons) or "无需再分配")
 
 
+def _apply_allocations(current_plan, allocations, rules):
+    """把 allocate 的每科分配时长写回计划：更新 planned_hours 并重算 scheduled_slots。
+
+    只改主任务（跳过 catch_up 等附加任务），保证「调整后任务的具体时间与内容」一致，
+    供前端写回 new_plan 并同步到今日/任务清单。
+    """
+    new_plan = copy.deepcopy(current_plan)
+    hours_by_subject = {a["subject"]: a["allocated_hours"] for a in allocations}
+    for t in new_plan.get("tasks", []):
+        if t.get("flag") == "catch_up":
+            continue
+        subj = t.get("subject")
+        if subj in hours_by_subject:
+            t["planned_hours"] = round(hours_by_subject[subj], 2)
+            calibrate_slots(t)
+    return new_plan
+
+
 def allocate(learning_memory, current_plan, daily_available_hours, rules=None, today=None):
     """Skill 3：全局资源再分配（多科目冲突）。
 
@@ -539,6 +563,7 @@ def allocate(learning_memory, current_plan, daily_available_hours, rules=None, t
         f"各科掌握度：{mastery_summary}",
         f"可用时长：每日 {total:g}h",
     ]
+    new_plan = _apply_allocations(current_plan, allocations, rules)
     return {
         "triggered": triggered,
         "trigger_reason": trigger_reason,
@@ -546,6 +571,7 @@ def allocate(learning_memory, current_plan, daily_available_hours, rules=None, t
         "min_floor": min_floor,
         "formula": formula,
         "allocations": allocations,
+        "new_plan": new_plan,
         "evidence": evidence,
     }
 

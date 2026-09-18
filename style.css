@@ -897,6 +897,8 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
   flex-wrap: wrap;
   margin-top: 12px;
 }
+/* 用 hidden 属性隐藏时，覆盖上面的 display:flex，保证翻页控件真正消失 */
+.rh-pager[hidden] { display: none; }
 .rh-pager .btn:disabled { opacity: .45; cursor: not-allowed; }
 .rh-page-info {
   font-size: .88rem;

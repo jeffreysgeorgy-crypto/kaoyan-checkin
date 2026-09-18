@@ -503,6 +503,7 @@ def allocate_endpoint(payload: dict):
             "min_floor": result.get("min_floor"),
             "formula": result.get("formula"),
             "allocations": result.get("allocations", []),
+            "new_plan": result.get("new_plan"),
             "reason": [a.get("reason", "") for a in result.get("allocations", [])],
             "evidence": result.get("evidence", []),
         }

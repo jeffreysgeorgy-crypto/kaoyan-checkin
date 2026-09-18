@@ -1385,7 +1385,7 @@ function getAgentResults() {
 
 function agentErrMsg(err) {
   if (err && err.name === 'TypeError') {
-    return '后端未连接，请检查：①后端是否启动 ②后端地址是否填写正确 ③cpolar 隧道是否还在运行';
+    return '后端未连接，请检查：①后端是否启动 ②cpolar 隧道是否还在运行';
   }
   return (err && err.message ? err.message : String(err));
 }
@@ -1583,7 +1583,13 @@ async function doAllocate() {
     if (data.status !== 'ok') throw new Error(data.message || '分配失败');
     saveAgentResult('allocate', data);
     renderAgentResults();
-    setAgentServerStatus('再分配完成：' + (data.allocations ? data.allocations.length : 0) + ' 科');
+    if (data.new_plan && data.new_plan.tasks) {
+      // 资源再分配结果也写回计划（具体时间 + 内容），同步到今日/任务清单
+      const r = applyAgentPlan({ current_plan: data.new_plan });
+      setAgentServerStatus('再分配完成：已写入 ' + r.targetDate + '（' + r.count + ' 个科目）');
+    } else {
+      setAgentServerStatus('再分配完成：' + (data.allocations ? data.allocations.length : 0) + ' 科');
+    }
   } catch (err) {
     flashAgentError(agentErrMsg(err));
   } finally {
@@ -4220,13 +4226,10 @@ function renderMe(state) {
    - 导出：把 localStorage 的打卡记录 + 错题本 + 专注 + 单词 汇总成 Agent 的 memory.json
    - 导入：把 Agent 生成的 new_plan.json（current_plan + replanning_log）写回未来计划
    ============================================================ */
-// FastAPI 后端地址（本地开发；部署后改成实际服务地址）
+// FastAPI 后端地址：本地开发连本机；云端/手机访问时前后端同源，走相对路径 /api/...
 const BACKEND_URL = (() => {
-  const saved = localStorage.getItem('BACKEND_URL');
-  if (saved) return saved.replace(/\/+$/, '');   // 去末尾斜杠，避免出现 //api 双斜杠
   const host = (location.hostname || '').toLowerCase();
   const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '';
-  // 本地开发默认连本机后端；云端部署（前端后端同源，如 Render）默认空串 → 走相对路径 /api/...
   return isLocal ? 'http://127.0.0.1:8000' : '';
 })();
 
@@ -4500,19 +4503,23 @@ function applyAgentPlan(np) {
   np.current_plan.tasks.forEach(function (t) {
     const m = AGENT_SUBJECT_MAP.filter(function (x) { return x.label === t.subject || x.key === t.subject; })[0];
     if (!m) return;
-    if (override[m.key]) return; // 主任务优先，跳过补欠/升级等附加任务（如 ds_1_catchup）
+    // getPlanForDate 读的覆盖键是 math/ds/cs/english；AGENT_SUBJECT_MAP 里英语键为 eng，需对齐
+    const ovKey = m.key === 'eng' ? 'english' : m.key;
+    if (override[ovKey]) return; // 主任务优先，跳过补欠/升级等附加任务（如 ds_1_catchup）
     const time = (t.scheduled_slots && t.scheduled_slots[0]) || '';
-    override[m.key] = { time: time || '—', content: t.content };
+    override[ovKey] = { time: time || '—', content: t.content };
   });
   if (!Object.keys(override).length) {
     throw new Error('未在新计划里找到可导入的科目任务');
   }
   state.agentPlan = state.agentPlan || {};
   state.agentPlan[targetDate] = override;
-  state.agentLog = np.replanning_log || [];
+  // 仅当响应里带了调整历史才覆盖（资源再分配不生成 replanning_log，避免清空已有日志）
+  if (np.replanning_log !== undefined) state.agentLog = np.replanning_log || [];
   saveState(state);
-  // 刷新今日时间轴与调整日志（时间轴会通过 syncTimelineWithTemplate 自动套用新计划）
+  // 刷新今日时间轴 + 任务清单 + 调整日志（时间轴会通过 syncTimelineWithTemplate 自动套用新计划）
   renderTimeline(loadState(), today);
+  renderTasksPage(loadState(), today);
   renderAdjustLog(loadState());
   return { targetDate: targetDate, count: Object.keys(override).length };
 }
@@ -5621,17 +5628,6 @@ function bindEvents() {
     e.target.value = '';
   });
 
-  // 后端地址设置（手机访问时改成本机/内网/cpolar 地址）
-  document.getElementById('saveBackendUrlBtn').addEventListener('click', function () {
-    const input = document.getElementById('backendUrlInput');
-    let v = (input.value || '').trim();
-    if (!v) { alert('请输入后端地址，例如 http://127.0.0.1:8000'); return; }
-    v = v.replace(/\/+$/, ''); // 去掉末尾斜杠，避免拼接出 /api 双斜杠
-    localStorage.setItem('BACKEND_URL', v);
-    alert('已保存，刷新页面生效');
-    location.reload();
-  });
-
   // FastAPI 在线联动 ①：导出并发送 memory.json
   document.getElementById('sendAgentBtn').addEventListener('click', async function () {
     const btn = document.getElementById('sendAgentBtn');
@@ -5766,10 +5762,6 @@ function init() {
   bindEvents();
   initStudyTracker();
   initTimelineRefresh();
-
-  // 回填后端地址设置框为当前 BACKEND_URL
-  const backendUrlInput = document.getElementById('backendUrlInput');
-  if (backendUrlInput) backendUrlInput.value = BACKEND_URL;
 
   // 恢复上次运行过的 Skill 结果卡片（localStorage 持久化，刷新不丢）
   renderAgentResults();
