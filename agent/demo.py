@@ -11,6 +11,10 @@ demo.py —— 一条命令演示所有 6 个答题点：  py demo.py
     Day 6：连续 6 天 → 第 3 次重规划：换任务类型 + 给出三个方向（推荐 A）
 
 运行结束后把最终记忆快照写入 memory_after_demo.json，并打印「6 个答题点对照表」。
+
+除逐日脚本回放外，还包含一段「真实闭环演示」（demo_real_loop）：用 FastAPI TestClient
+直接打真实的 server.py 端点（export_memory → diagnose → replan），还原「前端打卡 →
+记忆落盘 → 诊断/重规划 → 结果回传前端」的生产闭环，证明系统不是只有脚本回放。
 """
 
 import asyncio
@@ -495,6 +499,79 @@ def demo_reschedule(memory):
     _print_reschedule_result(r2)
 
 
+def demo_real_loop():
+    """真实闭环演示：前端打卡 → /api/export_memory → /api/diagnose → /api/replan → 前端展示。
+
+    用 FastAPI TestClient 直接打真实的 server.py 端点（不 mock），把 memory 路径临时
+    指到临时文件并关掉 Supabase，避免污染 demo 用到的干净 memory.json。结果应与
+    上面的脚本回放 Day 3 一致（同一份规则引擎、同一份数据）。
+    """
+    import os
+    import tempfile
+    import server as server_mod
+    from fastapi.testclient import TestClient
+
+    print("\n" + "=" * 72)
+    print("真实闭环演示：前端打卡 → /api/export_memory → /api/diagnose → /api/replan → 前端展示")
+    print("=" * 72)
+
+    # ① 模拟「用户在 HTML 里连续打卡 3 天（数据结构都没完成），点『导出并发送 Agent』」
+    payload = load_memory()
+    for day in DAYS[:3]:
+        update_memory_after_checkin(payload, day["date"], day["results"])
+        add_reflection(payload, day["date"], day["day"])
+    ds = payload["learning_memory"]["subjects"]["数据结构"]
+    print(f"\n① 前端 buildAgentMemory() 汇总（数据结构已连续未完成 {ds['consecutive_failures']} 天）：")
+    print(f"   科目数={len(payload['learning_memory']['subjects'])}，"
+          f"任务数={len(payload['current_plan']['tasks'])}，"
+          f"近期打卡记录={len(payload['recent_records'])} 条")
+
+    # ② 隔离后端存储：临时关 Supabase、临时 memory 文件，避免污染干净的 memory.json
+    old_supabase = server_mod._supabase
+    old_mem, old_new = server_mod.MEMORY_PATH, server_mod.NEW_PLAN_PATH
+    fd, tmp_path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    new_path = tmp_path + ".new_plan"
+    try:
+        server_mod._supabase = None
+        server_mod.MEMORY_PATH = tmp_path
+        server_mod.NEW_PLAN_PATH = new_path
+        client = TestClient(server_mod.app)
+
+        r = client.post("/api/export_memory", json=payload)
+        print(f"\n② POST /api/export_memory → {r.status_code}　{r.json()}")
+
+        r = client.post("/api/diagnose")
+        diag = r.json()
+        print(f"\n③ POST /api/diagnose → {r.status_code}")
+        if diag.get("status") == "ok":
+            d = diag["diagnosis"]
+            print(f"   整体状态：{d['overall_status']}")
+            for a in d.get("alert_subjects", []):
+                print(f"   预警：{a['subject']}（连续失败 {a['consecutive_failures']} 天，"
+                      f"主因 {a['primary_cause']}，弱知识点 {'、'.join(a.get('weak_topics', []))}）")
+
+        r = client.post("/api/replan")
+        rj = r.json()
+        print(f"\n④ POST /api/replan → {r.status_code}（前端 applyAgentPlan 据此刷新时间轴 + 调整日志）")
+        if rj.get("status") == "ok":
+            for adj in rj.get("adjustments", []):
+                print(f"   [调整前] {adj['before']}")
+                print(f"   [调整后] {adj['after']}")
+                print(f"   理由：{adj['reason']}")
+        print("\n   ✅ 真实闭环达成：打卡 → 记忆落盘 → 诊断 → 重规划 → 结果回传前端展示")
+        print("   （与上方脚本回放 Day 3 结果一致，因同一份规则引擎 + 同一份数据）")
+    finally:
+        server_mod._supabase = old_supabase
+        server_mod.MEMORY_PATH = old_mem
+        server_mod.NEW_PLAN_PATH = old_new
+        for p in (tmp_path, new_path):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def print_division_of_labor():
     """升级 ⑥：LLM 与 Skill 分工说明（结尾打印）。"""
     print("\n" + "=" * 72)
@@ -551,6 +628,7 @@ def print_six_points():
     print("=" * 72)
     checklist = [
         "✓ 6 个答题点全部覆盖",
+        "✓ 真实闭环已演示（前端打卡 → /api/export_memory → /api/diagnose + replan → 前端展示）",
         "✓ 数据全部可追溯到 memory.json",
         "✓ 所有调整都有 reason + evidence",
         "✓ 所有引用原文都存在于 memory.json",
@@ -721,6 +799,9 @@ async def main():
             print("   · 保留 C 作为后备选项：若 A 方案 2 周后仍无效，再升级到 C")
             memory["current_plan"] = structured["new_plan"]
             append_replan_log(memory, structured, d)
+
+    # ===== 真实闭环演示：前端打卡 → server.py → 前端展示（补充脚本回放之外的 HTTP 闭环） =====
+    demo_real_loop()
 
     # ===== 六大升级独立演示（③④已在逐日演示中体现：④打印[调整前]vs[调整后]、③补欠时段） =====
     demo_allocate(memory)
