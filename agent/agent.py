@@ -115,6 +115,7 @@ class LearningPlannerAgent:
                 self.memory.get("learning_memory", {}),
                 replan_count,
                 rules=self.memory.get("rules"),
+                user_profile=self.memory.get("user_profile"),
             )
             return {"diagnosis": diag, "new_plan": new_plan, "adjustments": adjustments}
 
@@ -295,6 +296,7 @@ class LearningPlannerAgent:
             self.memory.get("learning_memory", {}),
             replan_count,
             rules=self.memory.get("rules"),
+            user_profile=self.memory.get("user_profile"),
         )
         return {"diagnosis": diag, "new_plan": new_plan, "adjustments": adjustments}
 

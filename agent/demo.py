@@ -467,6 +467,43 @@ def demo_aggregate_resources(memory):
     print(f"总结：{result['summary']}")
 
 
+def demo_personalization(memory):
+    """升级 ⑩：个性化深度——preferred_start_time / focus_minutes / procrastination_cost 真正参与决策。"""
+    import copy
+    print("\n" + "=" * 72)
+    print("升级 ⑩：个性化深度（Skill: replan）——画像字段参与决策")
+    print("=" * 72)
+    profile = memory.get("user_profile", {})
+    pref = profile.get("preferred_start_time", "（未设置）")
+    print(f"用户偏好开始时段：{pref}")
+    print("（clean memory.json 各科 focus_minutes=0、procrastination_cost=0，逐日演示不触发；")
+    print("  下面构造一个『专注 45min/块 + 本周拖延 3h』的数据结构用户，看 replan 如何个性化 →）")
+
+    # 构造个性化画像：数据结构专注 45min/块、本周拖延 3h（6 次）
+    subjects = copy.deepcopy(load_memory()["learning_memory"]["subjects"])
+    subjects["数据结构"]["focus_minutes"] = 45
+    subjects["数据结构"]["procrastination_cost"] = {"hours": 3.0, "count": 6}
+    plan = {
+        "tasks": [{"task_id": "ds_1", "subject": "数据结构", "content": "单链表的插入与删除",
+                   "planned_hours": 3.0, "scheduled_slots": ["13:30-15:00"], "status": "undone",
+                   "priority": "high", "depends_on": []}],
+    }
+    diag = {"alert_subjects": [{"subject": "数据结构", "severity": "high",
+                                "consecutive_failures": 3, "recent_7d_completion_rate": 0.0,
+                                "primary_cause": "方法不当", "weak_topics": ["链表"],
+                                "emotion": "平静", "evidence_source": "关键词规则"}],
+            "healthy_subjects": []}
+    new_plan, adjustments = skills.replan(plan, diag, {"subjects": subjects}, 0,
+                                          rules=memory.get("rules"), user_profile=profile)
+    for a in adjustments:
+        print(f"  · [{a['level']}] {a['after']}")
+        if a["level"] == "split":
+            print("      ↑ focus_minutes=45 把首块『看视频』封顶到一个专注时长，降低启动门槛")
+    for t in new_plan["tasks"]:
+        if t.get("flag") == "catch_up":
+            print(f"  · 补欠时段：{t['scheduled_slots']}　（最拖延科目安排在偏好时段 {pref}，第一时间啃硬骨头）")
+
+
 def _print_reschedule_result(result):
     """打印 reschedule_for_calendar_change 的 5 项必答输出。"""
     print("① 课表变动了什么：")
@@ -858,6 +895,7 @@ async def main():
     demo_proactive_scan(memory)
     demo_decompose_goal(memory)
     demo_aggregate_resources(memory)
+    demo_personalization(memory)
 
     save_snapshot(memory)
     print(f"\n最终记忆快照已写入 {os.path.basename(SNAPSHOT_PATH)}")

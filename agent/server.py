@@ -346,7 +346,8 @@ def replan():
         _log(f"[replan] diagnose 结果：预警科目={len(alert)}，严重度={sev}")
 
         new_plan, adjustments = skills.replan(
-            current_plan, diagnosis, learning_memory, replan_count, rules=rules
+            current_plan, diagnosis, learning_memory, replan_count, rules=rules,
+            user_profile=memory.get("user_profile"),
         )
         catchup_count = sum(1 for a in adjustments if a.get("level") == "catch_up")
         _log(f"[replan] replan 结果：调整任务数={len(adjustments)}，新增补欠={catchup_count}")

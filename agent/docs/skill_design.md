@@ -36,9 +36,17 @@ LLM（DeepSeek V4）只负责在 openJiuwen 的 ReAct 循环里按需调度它�
 
 | 项 | 内容 |
 | --- | --- |
-| 输入 | `current_plan` + `diagnosis` + `learning_memory` + `replan_count`（已重规划次数） |
+| 输入 | `current_plan` + `diagnosis` + `learning_memory` + `replan_count`（已重规划次数）+ `user_profile`（可选，个性化调度） |
 | 输出 | `(new_plan, adjustments)`；`adjustments` 每条含 `task_id / subject / level / before / after / reason / evidence` |
 | 调用条件 | 诊断出预警科目后，对计划做针对性调整 |
+
+**个性化调度**（画像字段真正参与决策，缺省时行为不变）：
+
+| 画像字段 | 作用 |
+| --- | --- |
+| `user_profile.preferred_start_time` | 新任务（补欠）的起始时段，落在用户偏好开始时间 |
+| `learning_memory[科目].focus_minutes` | 拆分任务的子步骤粒度：首块「看视频/背单词」封顶到一个专注时长 |
+| `learning_memory[科目].procrastination_cost` | 拖延代价超阈值触发补欠，且补欠安排在偏好时段「第一时间啃硬骨头」 |
 
 **分级干预**：
 

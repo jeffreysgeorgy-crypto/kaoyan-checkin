@@ -13,10 +13,11 @@ Skill 1：diagnose(learning_memory, rules=None) -> diagnosis
     输出：诊断报告（整体状态 + 预警科目[严重度/原因/主因/反思引用] + 健康科目）
     调用条件：① 生成新计划前；② 某科目连续 3 天未完成触发重规划前。
 
-Skill 2：replan(current_plan, diagnosis, learning_memory, replan_count=0)
-    输入：当前计划 + 诊断结果 + 学习记忆 + 已重规划次数
+Skill 2：replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None, user_profile=None)
+    输入：当前计划 + 诊断结果 + 学习记忆 + 已重规划次数 + 用户画像（可选，用于个性化调度）
     输出：(新计划, 调整明细列表)，调整明细含 task_id / before / after / reason / evidence
     调用条件：诊断出预警科目后，对计划做针对性调整。
+    个性化：user_profile.preferred_start_time 决定新任务起始时段；subject.focus_minutes 决定拆分粒度。
 
 Skill 3：allocate(learning_memory, current_plan, daily_available_hours)
     输入：学习记忆 + 当前计划 + 每日可用时长
@@ -363,6 +364,19 @@ def _min_to_hhmm(m):
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
+def _slot_from_start(start_time, hours):
+    """从「开始时刻 + 时长」构造 "HH:MM-HH:MM" 时段；开始时刻非法时返回空串。
+
+    用于把用户画像里的 preferred_start_time 落到新任务的 scheduled_slots 上。
+    """
+    try:
+        start_min = _hhmm_to_min(str(start_time).strip())
+    except (ValueError, AttributeError):
+        return ""
+    end_min = start_min + max(int(round(hours * 60)), 10)
+    return f"{_min_to_hhmm(start_min)}-{_min_to_hhmm(end_min)}"
+
+
 def calibrate_slots(task):
     """时长（planned_hours）变化时，自动重算 scheduled_slots，保证「时长与时段一致」。
 
@@ -422,25 +436,33 @@ def _resolve_slot_conflicts(new_plan):
     return new_plan
 
 
-def _split_content(content, subject, hours):
+def _split_content(content, subject, hours, focus_minutes=0):
     """按科目把任务拆成「具体子步骤」，返回新任务名（不拼接旧名、不套通用模板）。
 
     - 数学        → 看讲解视频 + 做基础题
     - 数据结构/计组 → 看王道视频 + 做课后题
     - 英语        → 背单词 + 长难句（按原任务子项拆，背单词:长难句 ≈ 2:1）
     - 其他        → 保留原描述（不做通用拆分）
+
+    focus_minutes > 0 时，首个子步骤不超过一个「专注时长」（贴合用户实际专注耐力），
+    让拆出来的第一块刚好是一次能坚持的专注单元，进一步降低启动门槛。
     """
     total_min = max(int(round(hours * 60)), 1)  # 与 planned_hours 一致，杜绝拆出 0min 子项
+    focus = int(focus_minutes or 0)
     if subject == "英语":
-        word_min = int(round(total_min * 2 / 3))
-        return f"背单词 {word_min}min + 长难句 {total_min - word_min}min"
-    if subject in ("数据结构", "计算机组成原理"):
-        half = total_min // 2
-        return f"看王道视频 {half}min + 做课后题 {total_min - half}min"
-    if subject == "数学":
-        half = total_min // 2
-        return f"看讲解视频 {half}min + 做基础题 {total_min - half}min"
-    return content
+        first = int(round(total_min * 2 / 3))
+        label1, label2 = "背单词", "长难句"
+    elif subject in ("数据结构", "计算机组成原理"):
+        first = total_min // 2
+        label1, label2 = "看王道视频", "做课后题"
+    elif subject == "数学":
+        first = total_min // 2
+        label1, label2 = "看讲解视频", "做基础题"
+    else:
+        return content
+    if focus > 0:
+        first = min(first, focus)
+    return f"{label1} {first}min + {label2} {total_min - first}min"
 
 
 def _downgrade_content(content):
@@ -468,10 +490,16 @@ def _evidence(alert, conclusion=None, replan_count=None):
     return ev
 
 
-def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None):
-    """Skill 2：动态重规划。返回 (new_plan, adjustments)。"""
+def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None, user_profile=None):
+    """Skill 2：动态重规划。返回 (new_plan, adjustments)。
+
+    user_profile 为可选个性化画像：preferred_start_time 决定新任务（补欠）的起始时段，
+    learning_memory 里每科的 focus_minutes 决定拆分粒度。缺省时行为与旧版一致。
+    """
     rules = rules or DEFAULT_RULES
     replan_cfg = rules.get("replan", DEFAULT_RULES["replan"])
+    profile = user_profile or {}
+    preferred_start = profile.get("preferred_start_time") or "19:00"
     new_plan = copy.deepcopy(current_plan)
     adjustments = []
 
@@ -539,7 +567,8 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None)
             if new_hours <= 0:
                 new_hours = rules.get("min_floor", 0.5)  # 兜底，绝不 0h
             task["planned_hours"] = new_hours
-            task["content"] = _split_content(task["content"], subject, new_hours)
+            focus = int((learning_memory.get("subjects", {}).get(subject, {}) or {}).get("focus_minutes") or 0)
+            task["content"] = _split_content(task["content"], subject, new_hours, focus_minutes=focus)
             task["flag"] = "split"
             calibrate_slots(task)  # 时长变化后按新 planned_hours 重算时段
             adjustments.append({
@@ -592,7 +621,8 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None)
                 "subject": name,
                 "content": f"补欠专项：①错题回顾 30min ②指针基础专项 30min（共 {catch_up}h）",
                 "planned_hours": catch_up,
-                "scheduled_slots": [],
+                # 个性化：把最拖延科目的补欠安排在用户偏好开始时段，第一时间啃硬骨头
+                "scheduled_slots": [slot] if (slot := _slot_from_start(preferred_start, catch_up)) else [],
                 "status": "undone",
                 "priority": "medium",
                 "flag": "catch_up",
