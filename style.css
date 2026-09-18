@@ -1466,6 +1466,7 @@ table.schedule .sc-loc { font-size: .64rem; }
 .arc-tag.warn { background: #fdeaea; color: #c62828; }
 .arc-item { font-size: .86rem; color: #5a3a44; line-height: 1.6; margin: 3px 0; }
 .arc-reason { font-size: .82rem; color: #8a6a74; line-height: 1.6; padding-left: 10px; margin: 2px 0; }
+.arc-reason.arc-current-stage { color: #c2185b; font-weight: 700; }
 .arc-sub { font-size: .82rem; font-weight: 700; color: #8a6a74; margin: 10px 0 4px; }
 .arc-foot { font-size: .78rem; color: #b08a96; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #f0d8e0; line-height: 1.5; }
 .arc-bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }

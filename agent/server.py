@@ -16,6 +16,8 @@ server.py —— FastAPI 后端：打通 HTML 前端与 Python Agent。
     POST /api/interpret_feedback  理解反思原文 → 结构化信号，写入 memory.json
     POST /api/proactive_scan   未来 7 天负荷预测 + 削峰填谷 + 降级决策
     POST /api/reschedule       课表变动 → 冲突检测 + 重排受影响任务
+    POST /api/decompose_goal   目标拆解：知识模块覆盖缺口 + 阶段里程碑
+    POST /api/aggregate_resources  按弱知识点聚合分散资源（视频/题/错题本）
     POST /api/parse_schedule   接收课表图片（base64），调硅基流动视觉模型 OCR，返回可编辑条目
     POST /api/upload_mistake   接收错题照片（multipart/form-data），保存到 uploads/ 目录
 
@@ -593,6 +595,57 @@ def proactive_scan_endpoint(payload: dict):
         }
     except Exception as exc:
         _log(f"[proactive_scan] 错误：{exc}")
+        return _err(str(exc))
+
+
+@app.post("/api/decompose_goal")
+def decompose_goal_endpoint():
+    """读 memory.json → 跑 skills.decompose_goal（目标拆解）。
+
+    把「考研大目标」拆成需覆盖知识模块，对比当前计划指出覆盖缺口，
+    并按 target_date 给出阶段里程碑与当前所处阶段（对应命题痛点「目标不清」）。
+    """
+    try:
+        memory = _load_memory_safe()
+        user_profile = memory.get("user_profile", {})
+        current_plan = memory.get("current_plan", {})
+        learning_memory = memory.get("learning_memory", {})
+        rules = memory.get("rules") or None
+        _log(f"[decompose_goal] 目标：{user_profile.get('goal', '')}，任务数={len(current_plan.get('tasks', []))}")
+        result = skills.decompose_goal(user_profile, current_plan, learning_memory, rules=rules)
+        _log(f"[decompose_goal] 需覆盖 {len(result.get('required_modules', []))} 个模块，"
+             f"缺口 {len(result.get('missing_modules', []))} 个，当前阶段={result.get('current_stage')}")
+        return {"status": "ok", **result}
+    except Exception as exc:
+        _log(f"[decompose_goal] 错误：{exc}")
+        return _err(str(exc))
+
+
+@app.post("/api/aggregate_resources")
+def aggregate_resources_endpoint(payload: dict):
+    """按弱知识点聚合分散资源 → skills.aggregate_resources（对应命题痛点「资源分散」）。
+
+    输入：{"weak_topics": ["链表", ...]}（可选；缺省时从 memory.json 各科 weak_topics 汇总）
+    """
+    try:
+        payload = payload if isinstance(payload, dict) else {}
+        weak_topics = [w for w in (payload.get("weak_topics") or []) if w]
+
+        # 前端未显式传入时，用记忆里各科 weak_topics 汇总（错题本标签 → 记忆）
+        if not weak_topics:
+            memory = _load_memory_safe()
+            for info in memory.get("learning_memory", {}).get("subjects", {}).values():
+                for w in info.get("weak_topics") or []:
+                    if w not in weak_topics:
+                        weak_topics.append(w)
+            _log(f"[aggregate_resources] 前端未传弱知识点，从记忆汇总得到 {len(weak_topics)} 个")
+        else:
+            _log(f"[aggregate_resources] 收到弱知识点 {len(weak_topics)} 个：{'、'.join(weak_topics)}")
+
+        result = skills.aggregate_resources(weak_topics)
+        return {"status": "ok", **result}
+    except Exception as exc:
+        _log(f"[aggregate_resources] 错误：{exc}")
         return _err(str(exc))
 
 

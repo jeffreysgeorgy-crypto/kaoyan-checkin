@@ -300,9 +300,9 @@ table(doc,
           ["5", "生成新计划", "new_plan + reason + evidence 写回前端，今日时间轴更新"],
       ],
       widths=[1.5, 4, 9.5])
-p(doc, "技术栈：Python + FastAPI（后端，9 个 POST 接口）+ openJiuwen（决策编排）+ HTML/JS（前端，localStorage 持久化）+ Supabase（数据，规划中）。")
+p(doc, "技术栈：Python + FastAPI（后端，11 个 POST 接口）+ openJiuwen（决策编排）+ HTML/JS（前端，localStorage 持久化）+ Supabase（数据，规划中）。")
 h(doc, "3.2.2 核心技术 / 方法（8 个 Skill 详述）", 3)
-p(doc, "8 个 Skill 全部为确定性规则，输入输出与调用条件如下（每个 Skill 单独一节）。其中前 6 个已接入 HTML 前端入口按钮，decompose_goal / aggregate_resources 两个当前由 demo.py 演示，属「引擎已具备、UI 待补」的边界。")
+p(doc, "8 个 Skill 全部为确定性规则，输入输出与调用条件如下（每个 Skill 单独一节）。8 个 Skill 均已接入 HTML 前端入口按钮（目标拆解 / 资源聚合位于「我的」页 Skill 控制台），同时 demo.py 的升级⑧/⑨段落也可离线演示。")
 
 h(doc, "3.2.2.1 Skill 1：diagnose（学习诊断）", 4)
 table(doc,

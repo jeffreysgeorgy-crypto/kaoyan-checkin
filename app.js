@@ -1358,7 +1358,7 @@ function confirmImportSchedule() {
 }
 
 /* ---------- 6 个 Skill 前端入口：loading / 结果卡片 / localStorage 持久化 ---------- */
-const AGENT_RESULT_ORDER = ['diagnose', 'replan', 'allocate', 'scan'];  // 卡片展示顺序（feedback 在反思页、reschedule 在课表页）
+const AGENT_RESULT_ORDER = ['diagnose', 'replan', 'allocate', 'scan', 'decompose', 'aggregate'];  // 卡片展示顺序（feedback 在反思页、reschedule 在课表页）
 
 function setBtnLoading(btn, loading) {
   if (!btn) return;
@@ -1512,6 +1512,63 @@ function renderEvidenceBlock(evidence) {
   return h;
 }
 
+function renderDecomposeCard(d) {
+  let html = '<div class="agent-result-card"><div class="arc-title">🎯 目标拆解</div>';
+  html += '<div class="arc-item">目标：' + escapeHtml(d.goal || '—') + '</div>';
+  if (d.target_date) {
+    html += '<div class="arc-item">目标日期：' + escapeHtml(d.target_date) +
+      (d.remaining_days !== null && d.remaining_days !== undefined ? '　剩余 ' + d.remaining_days + ' 天' : '') + '</div>';
+  }
+  const required = d.required_modules || [];
+  const covered = d.covered_modules || [];
+  const missing = d.missing_modules || [];
+  const rate = d.coverage_rate;
+  html += '<div class="arc-sub">模块覆盖' + (rate !== null && rate !== undefined ? '（' + Math.round(rate * 100) + '%）' : '') + '</div>';
+  if (required.length) {
+    required.forEach(function (m) {
+      const isCovered = covered.indexOf(m) >= 0;
+      html += '<div class="arc-reason">' + (isCovered ? '✅ ' : '❌ 缺口：') + escapeHtml(m) + '</div>';
+    });
+  } else {
+    html += '<div class="arc-reason">未在目标中识别到已知科目关键词</div>';
+  }
+  if ((d.extra_subjects || []).length) {
+    html += '<div class="arc-reason">计划内目标外科目：' + d.extra_subjects.map(escapeHtml).join('、') + '</div>';
+  }
+  const stages = d.stages || [];
+  if (stages.length) {
+    html += '<div class="arc-sub">阶段里程碑' + (d.current_stage ? '（当前：' + escapeHtml(d.current_stage) + '）' : '') + '</div>';
+    stages.forEach(function (s) {
+      const isCurrent = s.name === d.current_stage;
+      html += '<div class="arc-reason' + (isCurrent ? ' arc-current-stage' : '') + '">' +
+        (isCurrent ? '▶ ' : '· ') + escapeHtml(s.name) + '：' + escapeHtml(s.start) + ' ~ ' + escapeHtml(s.end) +
+        ' — ' + escapeHtml(s.focus || '') + '</div>';
+    });
+  }
+  if (missing.length) {
+    html += '<div class="arc-foot" style="color:#c0392b">缺口：' + missing.map(escapeHtml).join('、') + '，建议尽快补入计划</div>';
+  }
+  html += '<div class="arc-foot">' + escapeHtml(d.recommendation || '') + '</div>';
+  return html + '</div>';
+}
+
+function renderAggregateCard(d) {
+  let html = '<div class="agent-result-card"><div class="arc-title">📚 资源聚合</div>';
+  const plan = d.plan || [];
+  if (!plan.length) {
+    html += '<div class="arc-item">暂无弱知识点（错题本未掌握标签为空），无需聚合资源。</div>';
+  } else {
+    plan.forEach(function (p) {
+      html += '<div class="arc-sub">🎯 ' + escapeHtml(p.topic) + '</div>';
+      (p.resources || []).forEach(function (r) {
+        html += '<div class="arc-reason">· [' + escapeHtml(r.type) + '] ' + escapeHtml(r.name) + '</div>';
+      });
+    });
+  }
+  html += '<div class="arc-foot">' + escapeHtml(d.summary || '') + '</div>';
+  return html + '</div>';
+}
+
 function renderAgentResults() {
   const el = document.getElementById('agentResults');
   if (!el) return;
@@ -1524,6 +1581,8 @@ function renderAgentResults() {
     else if (key === 'replan') html += renderReplanCard(d);
     else if (key === 'allocate') html += renderAllocateCard(d);
     else if (key === 'scan') html += renderScanCard(d);
+    else if (key === 'decompose') html += renderDecomposeCard(d);
+    else if (key === 'aggregate') html += renderAggregateCard(d);
   });
   if (!html) html = '<p class="hint">尚未运行任何 Skill。点上面的按钮开始（「分析反思」在反思页，「课表重排」在课表页）。</p>';
   el.innerHTML = html;
@@ -1621,6 +1680,58 @@ async function doProactiveScan() {
     saveAgentResult('scan', data);
     renderAgentResults();
     setAgentServerStatus('负荷扫描完成：超载 ' + (data.overload_days ? data.overload_days.length : 0) + ' 天');
+  } catch (err) {
+    flashAgentError(agentErrMsg(err));
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
+/* 从本地错题本未掌握标签汇总弱知识点（供资源聚合 Skill 使用） */
+function collectWeakTopics(state) {
+  const out = [];
+  AGENT_SUBJECT_MAP.forEach(function (m) {
+    subjectErrorStats(state, AGENT_SUBJECT_ALIASES[m.key]).weak.forEach(function (w) {
+      if (out.indexOf(w) < 0) out.push(w);
+    });
+  });
+  return out;
+}
+
+async function doDecomposeGoal() {
+  const btn = document.getElementById('decomposeBtn');
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch(BACKEND_URL + '/api/decompose_goal', { method: 'POST' });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '目标拆解失败');
+    saveAgentResult('decompose', data);
+    renderAgentResults();
+    const gap = (data.missing_modules || []).length;
+    setAgentServerStatus(gap ? ('目标拆解：发现 ' + gap + ' 个模块缺口') : '目标拆解：模块覆盖完整');
+  } catch (err) {
+    flashAgentError(agentErrMsg(err));
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
+async function doAggregateResources() {
+  const btn = document.getElementById('aggregateBtn');
+  setBtnLoading(btn, true);
+  try {
+    // 优先用本地错题本的未掌握标签；为空时后端再从记忆汇总
+    const weakTopics = collectWeakTopics(loadState());
+    const res = await fetch(BACKEND_URL + '/api/aggregate_resources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weak_topics: weakTopics }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '资源聚合失败');
+    saveAgentResult('aggregate', data);
+    renderAgentResults();
+    setAgentServerStatus('资源聚合完成：覆盖 ' + (data.weak_topics || []).length + ' 个弱知识点');
   } catch (err) {
     flashAgentError(agentErrMsg(err));
   } finally {
@@ -4258,6 +4369,7 @@ const AGENT_LEVEL_LABELS = {
   escalation: '升级处理',
   downgrade: '降级处理',
   split: '拆分任务',
+  hold: '维持观察',
   remind: '标红提醒',
   catch_up: '补欠时段',
   error_review: '错题回顾',
@@ -5715,6 +5827,8 @@ function bindEvents() {
   document.getElementById('diagnoseBtn').addEventListener('click', doDiagnose);
   document.getElementById('allocateBtn').addEventListener('click', doAllocate);
   document.getElementById('scanBtn').addEventListener('click', doProactiveScan);
+  document.getElementById('decomposeBtn').addEventListener('click', doDecomposeGoal);
+  document.getElementById('aggregateBtn').addEventListener('click', doAggregateResources);
   document.getElementById('analyzeReflectBtn').addEventListener('click', doAnalyzeReflect);
 
   // FastAPI 在线联动 ③：上传错题照片（multipart/form-data）

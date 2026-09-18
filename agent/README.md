@@ -15,6 +15,12 @@
 
 # 2. 一条命令演示所有答题点
 py demo.py
+
+# 3.（可选）规则引擎单元测试：41 个用例，0.1s 跑完全部分支边界
+py -m pytest test_skills.py -v
+
+# 4.（可选）效果验证：100 名虚拟学生 × 30 天配对 A/B 回放（不触碰真实数据）
+py simulate.py
 ```
 
 > 没有配置 API Key 也能跑通：`demo.py` 会自动降级为「确定性规则输出」，
@@ -30,6 +36,10 @@ agent/
 ├── server.py                # FastAPI 后端：打通 HTML 前端与 Agent（免手动搬文件）
 ├── requirements.txt         # FastAPI 后端依赖（fastapi / uvicorn / python-multipart / supabase）
 ├── demo.py                  # 逐日演示脚本（一条命令覆盖 6 个答题点）
+├── test_skills.py           # 规则引擎 pytest 单元测试（41 个用例，覆盖 8 个 Skill 分支边界）
+├── simulate.py              # 虚拟学生 A/B 回放实验（动态重规划 vs 静态计划，纯虚拟数据）
+├── simulation_report.json   # 模拟实验结果（simulate.py 产出，答辩用；与真实记忆完全隔离）
+├── test_agent.py            # openJiuwen AgentCard / ReAct 冒烟测试（需 API Key）
 ├── presentation_script.md   # 答辩逐字稿 + 时间分配（5–8 分钟）
 ├── memory_after_demo.json   # demo 运行后生成的最终记忆快照
 ├── .env                     # 模型连接配置
@@ -314,9 +324,9 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 > 注意：裸 IP + 非标准端口是 HTTP（非 HTTPS），所以 PWA 离线缓存（service worker）不生效，
 > 但核心功能（打卡 / 错题 / 专注 / 单词 / Agent 联动）全部正常。要 HTTPS + 自定义域名需 ICP 备案。
 
-## 6 个 Skill 完整演示流程
+## 8 个 Skill 完整演示流程
 
-6 个 Skill 全部接入了 HTML 前端，每个配一个入口按钮；后端只跑确定性规则（不调 LLM），
+8 个 Skill 全部接入了 HTML 前端，每个配一个入口按钮；后端只跑确定性规则（不调 LLM），
 因此每一步都稳定返回 `reason` + `evidence`，答辩可逐条解释。
 
 | # | Skill | 前端入口 | 后端接口 | 结果卡片展示 |
@@ -327,10 +337,11 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 | 4 | 未来负荷扫描 `proactive_scan` | 「我的」→ 📊 未来 7 天负荷 | `POST /api/proactive_scan` | 7 天负荷柱、超载红、削峰方案 |
 | 5 | 反馈解析 `interpret_feedback` | 「反思」→ 💬 分析反思 | `POST /api/interpret_feedback` | 归因 / 弱知识点 / 情绪 / 建议 |
 | 6 | 课表变动重排 `reschedule_for_calendar_change` | 「课表」→ 🔄 检测冲突并重排 | `POST /api/reschedule` | 冲突明细 + 新计划 |
+| 7 | 目标拆解 `decompose_goal` | 「我的」→ 🎯 目标拆解 | `POST /api/decompose_goal` | 模块覆盖缺口 + 三阶段里程碑（对应「目标不清」） |
+| 8 | 资源聚合 `aggregate_resources` | 「我的」→ 📚 资源聚合 | `POST /api/aggregate_resources` | 弱知识点 → 视频/课后题/错题本资源清单（对应「资源分散」） |
 
-> 说明：`skills.py` 另有 2 个 Skill —— 目标拆解 `decompose_goal`（命题背景「目标不清」）与
-> 资源聚合 `aggregate_resources`（命题背景「资源分散」），目前由 `demo.py` 演示
-> （`py demo.py`），尚未接入 HTML 前端按钮，属「引擎已具备、UI 待补」的边界。
+> 说明：Skill 7/8 同样在 `demo.py` 的「升级 ⑧/⑨」段落演示；前端点击时 Skill 8 优先取本地错题本
+> 未掌握标签作为弱知识点，为空时后端再从 `memory.json` 各科 `weak_topics` 汇总。
 
 **统一体验**（5 条要求全部落地）：
 1. **loading**：点按钮后文字变「⏳ 处理中…」并禁用，请求结束恢复；
@@ -339,7 +350,7 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 4. **错误红色提示**：失败时 `#agentResults` / `#feedbackResult` 顶部插入红色错误条，并在「Agent 在线联动」状态栏标红；
 5. **写回 localStorage**：结果存进 `state.agentResults`，刷新页面不丢（`init()` 里 `renderAgentResults()` / `renderFeedbackResult()` 恢复）。
 
-### 完整演示脚本（答辩用，一次跑通 6 个 Skill）
+### 完整演示脚本（答辩用，一次跑通 8 个 Skill）
 
 ```text
 0. 启动后端：cd agent && py server.py            # 127.0.0.1:8000
@@ -348,13 +359,46 @@ sleep 3 && curl http://127.0.0.1:8000/api/health
 3. 「我的」→ 🔄 重新规划                         # Skill②：调整前后对比卡片 + 今日时间轴更新
 4. 「我的」→ ⚖️ 资源再分配                       # Skill③：4 科小时分配条形图 + 公式
 5. 「我的」→ 📊 未来 7 天负荷                    # Skill④：超载日标红 + 削峰填谷方案
-6. 「反思」页填三段反思 → 💬 分析反思            # Skill⑤：归因/弱知识点/情绪/建议
-7. 「课表」页 → 📷 导入课表 → 🔄 检测冲突并重排  # Skill⑥：冲突检测 + 重排新计划
-8. 刷新页面 → 第 2~5 步的结果卡片仍在（localStorage 持久化）
+6. 「我的」→ 🎯 目标拆解                         # Skill⑦：模块覆盖缺口 + 基础/强化/冲刺里程碑
+7. 「我的」→ 📚 资源聚合                         # Skill⑧：弱知识点 → 视频/题/错题本清单
+8. 「反思」页填三段反思 → 💬 分析反思            # Skill⑤：归因/弱知识点/情绪/建议
+9. 「课表」页 → 📷 导入课表 → 🔄 检测冲突并重排  # Skill⑥：冲突检测 + 重排新计划
+10. 刷新页面 → 第 2~7 步的结果卡片仍在（localStorage 持久化）
 ```
 
-> 注意：`/api/diagnose` 和 `/api/replan` 依赖 `memory.json`，需先点「导出并发送 Agent」生成。其余 4 个 Skill 不强依赖。
+> 注意：`/api/diagnose` 和 `/api/replan` 依赖 `memory.json`，需先点「导出并发送 Agent」生成。其余 6 个 Skill 不强依赖。
 > 另：Skill⑥ 依赖「课表」页已有课表数据（先 📷 导入或 📅 新增课程）。
+
+## 效果验证：虚拟学生 A/B 回放实验（`simulate.py`）
+
+为回答评委必问的「你怎么证明动态重规划比静态计划好」，用蒙特卡洛模拟做**配对对照实验**：
+
+- **设计**：100 名虚拟学生（各科基础能力按 Beta 分布随机生成，含个体差异）× 30 天，
+  同一批学生、同一串随机数各跑两遍——A 组初始计划永不调整；B 组命中预警时
+  **真实调用 `skills.diagnose + skills.replan`**（回放线上同一套规则引擎，不是另写逻辑）。
+- **行为模型**：完成概率 = 基础能力 − 长任务启动门槛 − 连续失败信心衰减 + 调整后难度补偿，
+  每个假设都写在 `simulate.py` 文件头，答辩可逐条解释。
+- **触发节奏**：high 预警当天触发，实质调整后留 2 天观察冷却（对齐 `hold` 语义）+ 每 7 天周期体检。
+- **数据隔离**：不读不写 `memory.json`、不连 Supabase；虚拟人凭空生成，结果只落
+  `simulation_report.json`（已验证实验期间真实记忆文件时间戳不变）。
+
+**结果（seed=42，完全可复现）：**
+
+| 指标 | A 静态计划 | B 动态重规划 | 变化 |
+| --- | --- | --- | --- |
+| 30 天平均每日完成率 | 45.8% | 58.0% | **+12.25 个百分点**（相对 +26.8%） |
+| 配对胜率（B>A 的学生占比） | — | **99%** | — |
+| 数据结构期末完成率 | 21.4% | 49.9% | +28.4pp（最难科目获益最大） |
+| 人均重规划次数 | 0 | 8.0 | 约每 4 天一次，不频繁改计划 |
+
+换 seed=7 复验：+11.9pp、胜率 100%，结论不依赖特定随机种子。
+
+> 诚实边界：这是**模拟数据**而非真实用户 A/B，证明的是「规则引擎在给定行为假设下的有效性」；
+> 真实用户试用是下一阶段工作（见答辩稿展望）。
+
+```bash
+py simulate.py --students 100 --days 30 --seed 42
+```
 
 ## 6 个答题点对照
 
