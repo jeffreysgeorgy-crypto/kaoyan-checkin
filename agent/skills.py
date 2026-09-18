@@ -490,11 +490,13 @@ def _evidence(alert, conclusion=None, replan_count=None):
     return ev
 
 
-def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None, user_profile=None):
+def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None, user_profile=None, backlog=0):
     """Skill 2：动态重规划。返回 (new_plan, adjustments)。
 
     user_profile 为可选个性化画像：preferred_start_time 决定新任务（补欠）的起始时段，
     learning_memory 里每科的 focus_minutes 决定拆分粒度。缺省时行为与旧版一致。
+
+    backlog 为错题本未掌握题目数（>0 时把「错题回顾」排进计划，形成错题本 → 计划闭环）。
     """
     rules = rules or DEFAULT_RULES
     replan_cfg = rules.get("replan", DEFAULT_RULES["replan"])
@@ -655,6 +657,39 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None,
                     conclusion=f"拖延代价 {hours}h，安排 {catch_up}h 独立补欠任务",
                 ),
             })
+
+    # 升级 ⑪：错题本联动——未掌握错题驱动「错题回顾」任务，
+    # 把 proactive_scan 的 backlog_note（「建议纳入补欠池」）真正落到计划里。
+    if backlog > 0 and not any(t.get("flag") == "error_review" for t in new_plan.get("tasks", [])):
+        review_hours = round(min(backlog * 0.25, replan_cfg.get("catchup_max_hours", 1.0)), 1)
+        review_hours = max(review_hours, 0.3)  # 至少排 0.3h，避免「0 题 0h」的空任务
+        review_task = {
+            "task_id": "error_review_1",
+            "subject": "综合",
+            "content": f"错题回顾：重做 {backlog} 道未掌握错题（共 {review_hours}h）",
+            "planned_hours": review_hours,
+            "scheduled_slots": [slot] if (slot := _slot_from_start(preferred_start, review_hours)) else [],
+            "status": "undone",
+            "priority": "high",
+            "flag": "error_review",
+            "depends_on": [],
+        }
+        new_plan.setdefault("tasks", []).append(review_task)
+        adjustments.append({
+            "task_id": review_task["task_id"],
+            "subject": "综合",
+            "level": "error_review",
+            "before": "（无错题回顾任务）",
+            "after": _describe_task(review_task),
+            "reason": (
+                f"错题本有 {backlog} 道未掌握错题，此前仅提示「建议纳入补欠池」而未实际排进计划。"
+                f"本次把错题回顾真正排进计划：重做 {backlog} 题，共 {review_hours}h，"
+                "安排在偏好开始时段第一时间啃硬骨头，形成「错题本 → 计划」闭环。"
+            ),
+            "evidence": {
+                "evidence_source": f"错题本未掌握 {backlog} 题",
+            },
+        })
 
     # 调整可能导致同一天任务时段重叠，统一做一次小范围顺延（顺延到上一任务之后）
     new_plan = _resolve_slot_conflicts(new_plan)

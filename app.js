@@ -4260,6 +4260,7 @@ const AGENT_LEVEL_LABELS = {
   split: '拆分任务',
   remind: '标红提醒',
   catch_up: '补欠时段',
+  error_review: '错题回顾',
 };
 // 各科阶段 deadline（用于 Agent 的 allocate「阶段紧迫度」计算）
 const AGENT_SUBJECT_DEADLINES = {
@@ -4468,6 +4469,13 @@ function buildAgentMemory(state) {
   });
   recentRecords.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 
+  // 错题本 → 计划联动：把未掌握错题（数量 + 涉及标签）随 memory 导出，供 replan 排「错题回顾」
+  const errBook = getErrorBook(state);
+  const unmasteredTags = [];
+  errBook.filter(function (e) { return !e.mastered; }).forEach(function (e) {
+    (e.tags || []).forEach(function (t) { if (unmasteredTags.indexOf(t) < 0) unmasteredTags.push(t); });
+  });
+
   return {
     user_profile: {
       name: '考研大三学生',
@@ -4485,6 +4493,11 @@ function buildAgentMemory(state) {
     recent_records: recentRecords,
     // 把已导入的调整历史带回去，Agent 据此累加重规划次数（触发兜底 escalation 逻辑）
     replanning_log: state.agentLog || [],
+    error_book: {
+      unmastered_count: countUnmasteredMistakes(state),
+      total: errBook.length,
+      tags: unmasteredTags,
+    },
   };
 }
 

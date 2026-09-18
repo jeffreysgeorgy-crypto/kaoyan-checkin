@@ -36,7 +36,7 @@ LLM（DeepSeek V4）只负责在 openJiuwen 的 ReAct 循环里按需调度它�
 
 | 项 | 内容 |
 | --- | --- |
-| 输入 | `current_plan` + `diagnosis` + `learning_memory` + `replan_count`（已重规划次数）+ `user_profile`（可选，个性化调度） |
+| 输入 | `current_plan` + `diagnosis` + `learning_memory` + `replan_count`（已重规划次数）+ `user_profile`（可选，个性化调度）+ `backlog`（错题本未掌握数） |
 | 输出 | `(new_plan, adjustments)`；`adjustments` 每条含 `task_id / subject / level / before / after / reason / evidence` |
 | 调用条件 | 诊断出预警科目后，对计划做针对性调整 |
 
@@ -57,6 +57,7 @@ LLM（DeepSeek V4）只负责在 openJiuwen 的 ReAct 循环里按需调度它�
 | 严重度 high 且连续失败 = 3 天 | 减少时长 + 拆分任务 | `split` |
 | 严重度 medium | 仅标红提醒，不改内容 | `remind` |
 | 严重度 low | 不干预 | — |
+| 错题本 `backlog` > 0 | 新增「错题回顾」任务（重做 N 道未掌握错题，15min/题、封顶 1h），形成错题本 → 计划闭环 | `error_review` |
 
 ---
 
