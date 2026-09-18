@@ -244,21 +244,23 @@ on conflict (id) do nothing;
 
 ### 3. Render 部署后端
 
-1. <https://render.com> → New → **Web Service**，连接上面的 GitHub 仓库。
-2. 配置：
-   - **Root Directory**：`agent`
-   - **Build Command**：`pip install -r requirements.txt`
-   - **Start Command**：`uvicorn server:app --host 0.0.0.0 --port $PORT`
-3. 添加环境变量（Environment → Environment Variables）：
+仓库根目录已带 `render.yaml`（Blueprint），两种方式任选：
+
+**方式 A（推荐，省事）**：Render → New → **Blueprint** → 连接 GitHub 仓库，会自动读 `render.yaml`
+填好 Root Directory / 构建 / 启动命令。部署后到该服务的 **Environment** 标签，手动加两个密钥：
 
    | 变量 | 值 |
    | --- | --- |
-   | `SUPABASE_URL` | Supabase 的 Project URL |
-   | `SUPABASE_KEY` | Supabase 的 service_role key |
-   | `SUPABASE_BUCKET` | `mistakes`（可省略，默认就是它） |
-   | `VISION_API_KEY` | 硅基流动视觉 Key（可选，课表 OCR 用） |
+   | `SUPABASE_URL` | `https://lupsygzkoiwvheeqcmmj.supabase.co` |
+   | `SUPABASE_KEY` | 你的 service_role key（`eyJ...`） |
 
-4. Deploy 后访问 `https://<服务名>.onrender.com/`，应看到 `{"message":"Agent Server is running"}`。
+   （`VISION_API_KEY` 可选，课表 OCR 用；加完点 Save 会自动重启生效。）
+
+**方式 B（手动）**：Render → New → **Web Service** → 连仓库，
+Root Directory=`agent`、Build=`pip install -r requirements.txt`、
+Start=`uvicorn server:app --host 0.0.0.0 --port $PORT`，再在 Environment 加同样的 `SUPABASE_URL` / `SUPABASE_KEY`。
+
+部署后访问 `https://<服务名>.onrender.com/`，应看到 `{"message":"Agent Server is running"}`。
 
 ### 4. Vercel 部署前端
 

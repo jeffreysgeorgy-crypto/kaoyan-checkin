@@ -1,0 +1,23 @@
+# Render Blueprint：New → Blueprint → 连接 GitHub 仓库即可一键部署后端
+# 密钥（SUPABASE_URL / SUPABASE_KEY / VISION_API_KEY）不写进本文件，
+# 部署后在 Render 的 Environment 标签手动添加（详见 agent/README.md「云端部署」章节）。
+services:
+  - type: web
+    name: kaoyan-agent
+    runtime: python
+    rootDir: agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # 密钥：部署后手动填
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: VISION_API_KEY
+        sync: false
+      # 非密钥：可直接固化
+      - key: SUPABASE_BUCKET
+        value: mistakes
+      - key: SUPABASE_USER_ID
+        value: default
