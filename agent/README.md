@@ -273,6 +273,53 @@ Start Command=`cd agent && uvicorn server:app --host 0.0.0.0 --port $PORT`，
 > `onrender.com`（部署域名）通常可访问；打不开 `render.com` 时直接进 `dashboard.render.com`。
 > 免费版首次请求有几十秒冷启动，属正常。
 
+## 国内云服务器部署（无需绑卡，替代 Render）
+
+Render 的免费 Web Service 强制绑 Visa/Mastercard，银联卡过不了。国内用户可用腾讯云 / 阿里云的
+新用户免费试用云服务器代替：实名认证后开一台轻量服务器，把代码拉上去跑 uvicorn 即可，**代码零改动**
+（后端已顺带托管前端，单进程单端口）。
+
+### 1. 开服务器
+
+腾讯云「轻量应用服务器」或阿里云「ECS」→ 新用户免费试用（需**实名认证**，一般不用绑卡）。
+记下**公网 IP**，并在控制台的「防火墙 / 安全组」里**放行 TCP 8000 端口**。
+
+### 2. 服务器上部署
+
+SSH 登录服务器（或网页终端），粘贴执行：
+
+```bash
+sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
+cd ~
+git clone https://github.com/jeffreysgeorgy-crypto/kaoyan-checkin.git
+cd kaoyan-checkin/agent
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 写 .env（VISION 两行可选，课表 OCR 用）
+cat > .env << 'EOF'
+SUPABASE_URL=https://lupsygzkoiwvheeqcmmj.supabase.co
+SUPABASE_KEY=你的service_role_key
+VISION_API_BASE=https://api.siliconflow.cn/v1
+VISION_API_KEY=你的siliconflow_key
+VISION_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
+EOF
+
+# 后台启动（断开 SSH 后继续跑）
+nohup uvicorn server:app --host 0.0.0.0 --port 8000 > server.log 2>&1 &
+sleep 3 && curl http://127.0.0.1:8000/api/health
+```
+
+看到 `{"message":"Agent Server is running"}` 即成功。
+
+### 3. 手机访问
+
+手机浏览器打开 `http://<公网IP>:8000/` 即前端首页，**不用填后端地址**（同源）。
+数据存 Supabase，换手机打开同地址即同步。
+
+> 注意：裸 IP + 非标准端口是 HTTP（非 HTTPS），所以 PWA 离线缓存（service worker）不生效，
+> 但核心功能（打卡 / 错题 / 专注 / 单词 / Agent 联动）全部正常。要 HTTPS + 自定义域名需 ICP 备案。
+
 ## 6 个 Skill 完整演示流程
 
 6 个 Skill 全部接入了 HTML 前端，每个配一个入口按钮；后端只跑确定性规则（不调 LLM），
