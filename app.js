@@ -908,7 +908,7 @@ function renderTasksPage(state, dateStr) {
     (isToday ? '' : '<button class="btn btn-ghost btn-sm" id="taskBackToday">回到今天</button>') +
     '<button class="btn btn-primary btn-sm" id="taskAddBtn">+ 添加任务</button>' +
   '</div>';
-  listEl.innerHTML = navHtml;
+  listEl.innerHTML = navHtml + agentPlanHintHtml(state, dateStr);
   // 收集任务并按当前学科过滤
   const rows = collectTaskBlocks(state, dateStr);
   const filtered = rows.filter(function (r) { return matchSubjectFilter(r.block, currentSubjectFilter); });
@@ -1412,7 +1412,11 @@ function renderDiagnoseCard(d) {
     html += '<div class="arc-item"><b>' + escapeHtml(a.subject) + '</b> · 严重度 ' + escapeHtml(a.severity) +
       ' · 连续失败 ' + a.consecutive_failures + ' 天 · 完成率 ' + Math.round(a.recent_7d_completion_rate * 100) + '%</div>';
     html += '<div class="arc-reason">原因：' + escapeHtml((a.reasons || []).join('；')) + '</div>';
-    html += '<div class="arc-reason">主因：' + escapeHtml(a.primary_cause || '—') + '</div>';
+    let causeLine = '主因：' + escapeHtml(a.primary_cause || '—');
+    if (a.secondary_cause) causeLine += '　次因：' + escapeHtml(a.secondary_cause);
+    html += '<div class="arc-reason">' + causeLine + '</div>';
+    if (a.weak_topics && a.weak_topics.length) html += '<div class="arc-reason">弱知识点：' + escapeHtml(a.weak_topics.join('、')) + '</div>';
+    if (a.emotion) html += '<div class="arc-reason">情绪状态：' + escapeHtml(a.emotion) + '</div>';
   });
   if (healthy.length) {
     html += '<div class="arc-sub">健康科目</div><div class="arc-item">' +
@@ -1485,11 +1489,12 @@ function renderReplanCard(d) {
 
 function renderFeedbackCard(d) {
   let html = '<div class="agent-result-card"><div class="arc-title">💬 反思分析</div>';
-  html += '<div class="arc-item">归因：<b>' + escapeHtml(d.attribution || '—') + '</b></div>';
+  html += '<div class="arc-item">主因：<b>' + escapeHtml(d.primary_cause || d.attribution || '—') + '</b></div>';
+  if (d.secondary_cause) html += '<div class="arc-item">次因：' + escapeHtml(d.secondary_cause) + '</div>';
   html += '<div class="arc-item">弱知识点：' + ((d.weak_topics && d.weak_topics.length)
     ? d.weak_topics.map(function (x) { return escapeHtml(x); }).join('、') : '无') + '</div>';
-  html += '<div class="arc-item">情绪：' + escapeHtml(d.mood || '—') + '</div>';
-  html += '<div class="arc-item">建议：' + escapeHtml(d.suggestion || '—') + '</div>';
+  html += '<div class="arc-item">情绪状态：' + escapeHtml(d.emotion || d.mood || '—') + '</div>';
+  if (d.evidence_summary) html += '<div class="arc-item">结论：' + escapeHtml(d.evidence_summary) + '</div>';
   html += renderEvidenceBlock(d.evidence);
   if (d.source) html += '<div class="arc-foot">来源：' + escapeHtml(d.source === 'llm' ? 'LLM 抽取' : '关键词匹配（离线）') + '</div>';
   return html + '</div>';
@@ -2238,7 +2243,8 @@ function renderTimeline(state, dateStr) {
   }
   document.getElementById('timelineGoal').innerHTML =
     goalTitle + '：完成 <b>' + total + '</b> 个任务 · 已完成 <b>' + doneCount + '</b> / ' + total +
-    (pool.length ? ' · 待办池 <b class="pool-count">' + pool.length + '</b>' : '');
+    (pool.length ? ' · 待办池 <b class="pool-count">' + pool.length + '</b>' : '') +
+    agentPlanHintHtml(state, dateStr);
 
   document.getElementById('timeline').innerHTML = renderList.map(function (r) {
     const b = r.block, isPending = r.isPending;
@@ -4516,6 +4522,8 @@ function applyAgentPlan(np) {
   state.agentPlan[targetDate] = override;
   // 仅当响应里带了调整历史才覆盖（资源再分配不生成 replanning_log，避免清空已有日志）
   if (np.replanning_log !== undefined) state.agentLog = np.replanning_log || [];
+  // 标记本次 Agent 更新，供「今日 / 任务」页显示可点击提示（跳转到调整日志）
+  state.agentPlanUpdated = { date: targetDate, at: Date.now() };
   saveState(state);
   // 刷新今日时间轴 + 任务清单 + 调整日志（时间轴会通过 syncTimelineWithTemplate 自动套用新计划）
   renderTimeline(loadState(), today);
@@ -4534,15 +4542,19 @@ function setAgentServerStatus(msg, type) {
   else if (type === 'error') el.classList.add('error');
 }
 
-/* 渲染一条调整的结构化依据（连续失败天数 / 完成率 / 反思原文 / 结论） */
+/* 渲染一条调整的结构化依据（连续失败天数 / 完成率 / 主因 / 次因 / 弱知识点 / 情绪状态 / 依据来源）。
+   不再展示反思原文全文，只展示提炼后的结论。 */
 function renderAgentEvidence(ev) {
   if (!ev || typeof ev !== 'object') return '<div class="agent-log-row">依据：' + escapeHtml(ev || '') + '</div>';
   let h = '<div class="agent-log-ev">依据：</div>';
   if (ev.consecutive_failures !== undefined) h += '<div class="agent-log-ev-item">· 连续失败天数：' + ev.consecutive_failures + ' 天</div>';
   if (ev.completion_rate !== undefined) h += '<div class="agent-log-ev-item">· 近 7 天完成率：' + Math.round(ev.completion_rate * 100) + '%</div>';
   if (ev.replan_count !== undefined) h += '<div class="agent-log-ev-item">· 重规划次数：' + ev.replan_count + '</div>';
-  if (ev.reflection_quotes && ev.reflection_quotes.length) h += '<div class="agent-log-ev-item">· 反思原文：' + escapeHtml(ev.reflection_quotes.join('；')) + '</div>';
-  if (ev.conclusion) h += '<div class="agent-log-ev-item">· 结论：' + escapeHtml(ev.conclusion) + '</div>';
+  if (ev.primary_cause) h += '<div class="agent-log-ev-item">· 主因：' + escapeHtml(ev.primary_cause) + '</div>';
+  if (ev.secondary_cause) h += '<div class="agent-log-ev-item">· 次因：' + escapeHtml(ev.secondary_cause) + '</div>';
+  if (ev.weak_topics && ev.weak_topics.length) h += '<div class="agent-log-ev-item">· 弱知识点：' + escapeHtml(ev.weak_topics.join('、')) + '</div>';
+  if (ev.emotion) h += '<div class="agent-log-ev-item">· 情绪状态：' + escapeHtml(ev.emotion) + '</div>';
+  if (ev.evidence_source) h += '<div class="agent-log-ev-item">· 依据来源：' + escapeHtml(ev.evidence_source) + '</div>';
   return h;
 }
 
@@ -4603,6 +4615,13 @@ function renderAdjustLog(state) {
   el.innerHTML = html;
 }
 
+/* ---------- Agent 更新提示：今日 / 任务页展示，点击跳转到「统计 → 调整日志」 ---------- */
+function agentPlanHintHtml(state, dateStr) {
+  const upd = state.agentPlanUpdated;
+  if (!upd || upd.date !== dateStr) return '';
+  return '<button type="button" class="agent-plan-hint" data-agent-hint="1">✨ 计划已根据 Agent 建议更新，查看调整日志 ›</button>';
+}
+
 /* ---------- 事件绑定 ---------- */
 function bindEvents() {
   // 底部导航
@@ -4624,6 +4643,14 @@ function bindEvents() {
     const btn = e.target.closest('.stats-tab');
     if (!btn || !btn.dataset.statstab) return;
     switchStatsTab(btn.dataset.statstab);
+  });
+
+  // Agent 更新提示 → 跳转到「统计 → 调整日志」
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-agent-hint="1"]');
+    if (!btn) return;
+    switchTab('stats');
+    switchStatsTab('agent');
   });
 
   // 任务勾选

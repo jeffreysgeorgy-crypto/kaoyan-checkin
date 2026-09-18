@@ -514,7 +514,7 @@ def allocate_endpoint(payload: dict):
 
 @app.post("/api/interpret_feedback")
 def interpret_feedback_endpoint(payload: dict):
-    """理解一段反思原文 → 结构化信号 {归因/弱知识点/情绪/建议}，并写入 memory.json 的 feedback_signals。
+    """理解一段反思原文 → 结构化信号 {主因/次因/弱知识点/情绪/提炼结论}，并写入 memory.json 的 feedback_signals。
 
     输入：{"reflection": "单链表插入删除还是卡，感觉是方法不对。"}
     """
@@ -536,14 +536,15 @@ def interpret_feedback_endpoint(payload: dict):
         except FileNotFoundError:
             _log("[interpret_feedback] 学习记忆不存在，信号未落盘（仅返回给前端）")
 
-        _log(f"[interpret_feedback] 结果：归因={result.get('attribution')}，"
-             f"弱知识点={result.get('weak_topics')}，情绪={result.get('mood')}")
+        _log(f"[interpret_feedback] 结果：主因={result.get('primary_cause')}，"
+             f"次因={result.get('secondary_cause')}，情绪={result.get('emotion')}")
         return {
             "status": "ok",
-            "attribution": result.get("attribution"),
+            "primary_cause": result.get("primary_cause"),
+            "secondary_cause": result.get("secondary_cause"),
             "weak_topics": result.get("weak_topics"),
-            "mood": result.get("mood"),
-            "suggestion": result.get("suggestion"),
+            "emotion": result.get("emotion"),
+            "evidence_summary": result.get("evidence_summary"),
             "source": result.get("source"),
             "evidence": result.get("evidence", []),
         }

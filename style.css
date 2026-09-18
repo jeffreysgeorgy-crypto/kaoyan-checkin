@@ -420,6 +420,13 @@ table.schedule th.today, table.schedule td.today { background: #fff6d6; }
 .timeline-goal { text-align: center; font-weight: 700; font-size: 1rem; color: #ad1457; margin-bottom: 14px; }
 .timeline-goal b { color: #e0705a; }
 .timeline-goal .pool-count { color: #c62828; }
+.agent-plan-hint {
+  display: block; width: 100%; margin: 10px 0;
+  padding: 8px 12px; border: none; border-radius: 10px;
+  background: #e8f5e9; color: #2e7d32; font-weight: 600; font-size: .9rem;
+  text-align: center; cursor: pointer;
+}
+.agent-plan-hint:active { opacity: .8; }
 .timeline { display: flex; flex-direction: column; gap: 8px; }
 .tl-item {
   display: flex; flex-direction: column; gap: 6px;

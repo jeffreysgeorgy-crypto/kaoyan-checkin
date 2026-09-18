@@ -55,6 +55,38 @@ DEFAULT_RULES = {
 
 MASTERY_FORMULA = "完成率*0.4 + (1-错题率)*0.4 + 平均效率评分/5*0.2"
 
+# 多维度归因维度（顺序无关，命中关键词越多排名越靠前）。LLM 模式下由 prompt 引导产出同样维度。
+ATTRIBUTION_DIMENSIONS = [
+    ("方法不当", ["方法", "不会", "卡", "懵", "写不出", "看不懂", "做不出来", "看得懂",
+                  "没掌握", "不会写", "反应不过来", "搞不清", "不会做"]),
+    ("情绪干扰", ["男朋友", "女朋友", "吵架", "分手", "冷战", "感情", "心情", "难过",
+                  "不开心", "委屈", "失落", "孤独", "焦虑", "崩溃", "低落", "冷淡", "敷衍", "烦"]),
+    ("精力不足", ["困", "累", "疲惫", "头昏", "头晕", "没精神", "熬夜", "睡眠",
+                  "睡不好", "疲劳", "状态不好"]),
+    ("目标不清晰", ["迷茫", "没方向", "学了干什么", "学完要干什么", "目的", "没计划",
+                    "无从下手", "不知道学"]),
+    ("任务过载", ["任务太多", "做不完", "太多", "超负荷", "量太大", "完不成", "赶不上", "任务多"]),
+    ("时间投入不足", ["没时间", "来不及", "太忙", "没空", "时间不够", "没怎么学"]),
+    ("基础薄弱", ["基础", "跟不上", "公式记不住", "概念不清", "不会做", "看不懂课本"]),
+    ("环境干扰", ["宿舍", "室友", "手机", "分心", "打扰", "静不下心", "环境", "太吵", "很吵", "噪音"]),
+]
+
+# 情绪关键词（按顺序优先匹配）
+EMOTION_KEYWORDS = [
+    ("低落", ["难过", "不开心", "失落", "委屈", "心情不好", "低落", "孤独", "冷淡", "敷衍", "烦", "难受"]),
+    ("焦虑", ["焦虑", "崩溃", "担心", "害怕", "压力", "紧张", "慌"]),
+    ("疲惫", ["困", "累", "疲惫", "没精神", "头昏", "头晕", "熬夜", "睡不好", "疲劳"]),
+    ("积极", ["开心", "成就感", "收获", "顺利", "状态不错", "有进步"]),
+]
+
+# 弱知识点关键词（反思里提到的具体知识点）
+WEAK_TOPIC_KEYWORDS = {
+    "链表": "链表", "指针": "指针", "二叉树": "二叉树", "树": "树", "图": "图",
+    "存储": "存储器", "Cache": "Cache", "cache": "Cache",
+    "极限": "极限", "导数": "导数", "积分": "积分", "中值定理": "中值定理", "泰勒": "泰勒",
+    "单词": "单词", "长难句": "长难句",
+}
+
 
 def compute_mastery(raw_data):
     """按公式计算掌握度：完成率*0.4 + (1-错题率)*0.4 + 平均效率/5*0.2。"""
@@ -75,16 +107,47 @@ def _severity(failures, completion_rate, failures_threshold, completion_rate_thr
     return "low"
 
 
-def _primary_cause(failures, quotes):
-    """从反思原文做简单归因（关键词匹配），给出一条可解释的主因。"""
-    joined = " ".join(quotes)
-    if "方法" in joined or "不会" in joined or "卡" in joined or "做不出来" in joined:
-        return "方法不当（理解未内化，看得懂但写不出）"
-    if "时间" in joined or "困" in joined or "不够" in joined:
-        return "时间投入不足"
-    if "怀疑" in joined or "太难" in joined or "定太高" in joined:
-        return "目标与当前能力不匹配"
-    return "动力/计划匹配度不足"
+def _attribute_reflections(texts):
+    """把多条反思原文做确定性多维度归因（LLM 不可用时的兜底）。
+
+    返回 {primary_cause, secondary_cause, weak_topics, emotion, evidence_summary}。
+    不再只给「时间投入不足」单一口径：按 ATTRIBUTION_DIMENSIONS 命中关键词，
+    命中最多者为主因、次多者为次因；情绪单独按 EMOTION_KEYWORDS 匹配。
+    """
+    joined = " ".join(texts or [])
+    hits = []
+    for name, kws in ATTRIBUTION_DIMENSIONS:
+        cnt = sum(1 for k in kws if k in joined)
+        if cnt > 0:
+            hits.append((cnt, name))
+    hits.sort(key=lambda x: -x[0])
+    primary = hits[0][1] if hits else "状态波动（未识别单一主因）"
+    secondary = hits[1][1] if len(hits) > 1 else ""
+
+    emotion = "平静"
+    for name, kws in EMOTION_KEYWORDS:
+        if any(k in joined for k in kws):
+            emotion = name
+            break
+
+    weak = []
+    for kw, topic in WEAK_TOPIC_KEYWORDS.items():
+        if kw in joined and topic not in weak:
+            weak.append(topic)
+
+    parts = [f"主因：{primary}"]
+    if secondary:
+        parts.append(f"次因：{secondary}")
+    if weak:
+        parts.append(f"弱知识点：{'、'.join(weak)}")
+    parts.append(f"情绪：{emotion}")
+    return {
+        "primary_cause": primary,
+        "secondary_cause": secondary,
+        "weak_topics": weak,
+        "emotion": emotion,
+        "evidence_summary": "；".join(parts),
+    }
 
 
 def diagnose(learning_memory, rules=None):
@@ -116,6 +179,12 @@ def diagnose(learning_memory, rules=None):
 
         if sev in ("high", "medium"):
             quotes = [r.get("text", "") for r in info.get("recent_reflections", [])]
+            attr = _attribute_reflections(quotes)
+            # 弱知识点合并：记忆里记录的 + 反思里提到的，去重
+            weak_topics = list(info.get("weak_topics") or [])
+            for w in attr.get("weak_topics", []):
+                if w not in weak_topics:
+                    weak_topics.append(w)
             reasons = []
             if failures >= trig["consecutive_failures_threshold"]:
                 reasons.append(
@@ -129,8 +198,8 @@ def diagnose(learning_memory, rules=None):
                 reasons.append(
                     f"本周拖延代价 {proc_hours}h（{proc.get('count', 0)} 次），超过阈值 {proc_threshold}h，需安排补欠"
                 )
-            if info.get("weak_topics"):
-                reasons.append(f"弱知识点：{'、'.join(info['weak_topics'])}")
+            if weak_topics:
+                reasons.append(f"弱知识点：{'、'.join(weak_topics)}")
 
             alert_subjects.append({
                 "subject": name,
@@ -140,8 +209,12 @@ def diagnose(learning_memory, rules=None):
                 "mastery_score": score,
                 "procrastination_cost": proc_hours,
                 "reasons": reasons,
-                "primary_cause": _primary_cause(failures, quotes),
-                "reflection_quotes": quotes,
+                "primary_cause": attr["primary_cause"],
+                "secondary_cause": attr["secondary_cause"],
+                "weak_topics": weak_topics,
+                "emotion": attr["emotion"],
+                "evidence_summary": attr["evidence_summary"],
+                "evidence_source": f"近 {len(quotes)} 条反思 + 连续 {failures} 天失败",
             })
         else:
             healthy_subjects.append({
@@ -158,8 +231,14 @@ def diagnose(learning_memory, rules=None):
             f"近 {trig['lookback_days']} 天完成率 {a['recent_7d_completion_rate']:.0%}"
         )
     for a in alert_subjects:
-        if a["reflection_quotes"]:
-            evidence.append(f"反思原文（{a['subject']}）：{'；'.join(a['reflection_quotes'])}")
+        # 依据只引用提炼后的结论，不搬运反思原文（原文留在 memory.json 的 recent_reflections 供审计）
+        line = (
+            f"{a['subject']} 归因：主因 {a['primary_cause']}"
+            + (f"；次因 {a['secondary_cause']}" if a.get("secondary_cause") else "")
+            + (f"；弱知识点 {'、'.join(a['weak_topics'])}" if a.get("weak_topics") else "")
+            + f"；情绪 {a['emotion']}"
+        )
+        evidence.append(line)
     if not alert_subjects:
         evidence.append("各科连续失败天数与完成率均在阈值内，未触发预警")
     return {
@@ -192,7 +271,7 @@ def _has_catchup(plan, subject):
 
 def _describe_task(task):
     """任务的「调整前/后」可读描述。"""
-    return f"{task['subject']}：{task['content']}，{task['planned_hours']}h"
+    return f"{task['subject']}：{task['content']}，共 {task['planned_hours']}h"
 
 
 def _hhmm_to_min(t):
@@ -230,9 +309,60 @@ def calibrate_slots(task):
     return task
 
 
-def _split_content(content):
-    """拆分大块任务为可完成的子步骤。"""
-    return f"{content}（拆分：①看讲解视频 30min ②做 2 道基础题 30min）"
+def _resolve_slot_conflicts(new_plan):
+    """调整后同一天内任务时段互相冲突时，做小范围顺延。
+
+    按开始时间排序，发现与上一任务重叠时，把后一个任务顺延到上一任务结束之后，
+    时长不变（至少保留 10 分钟）。时段非法（无法解析起止）的任务跳过，避免误改。
+    """
+    ordered = []
+    for t in new_plan.get("tasks", []) or []:
+        slots = t.get("scheduled_slots") or []
+        if not slots:
+            continue
+        m = re.match(r"(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})", slots[0])
+        if not m:
+            continue
+        try:
+            s = _hhmm_to_min(m.group(1))
+            e = _hhmm_to_min(m.group(2))
+        except (ValueError, TypeError):
+            continue
+        ordered.append({"task": t, "start": s, "end": e})
+
+    ordered.sort(key=lambda x: x["start"])
+    prev_end = None
+    for item in ordered:
+        s, e = item["start"], item["end"]
+        task = item["task"]
+        if prev_end is not None and s < prev_end:
+            dur = max(e - s, 10)  # 顺延时保持原时长，至少 10 分钟
+            new_s = prev_end
+            task["scheduled_slots"] = [f"{_min_to_hhmm(new_s)}-{_min_to_hhmm(new_s + dur)}"]
+            e = new_s + dur
+        prev_end = e
+    return new_plan
+
+
+def _split_content(content, subject, hours):
+    """按科目把任务拆成「具体子步骤」，返回新任务名（不拼接旧名、不套通用模板）。
+
+    - 数学        → 看讲解视频 + 做基础题
+    - 数据结构/计组 → 看王道视频 + 做课后题
+    - 英语        → 背单词 + 长难句（按原任务子项拆，背单词:长难句 ≈ 2:1）
+    - 其他        → 保留原描述（不做通用拆分）
+    """
+    total_min = max(int(round(hours * 60)), 1)  # 与 planned_hours 一致，杜绝拆出 0min 子项
+    if subject == "英语":
+        word_min = int(round(total_min * 2 / 3))
+        return f"背单词 {word_min}min + 长难句 {total_min - word_min}min"
+    if subject in ("数据结构", "计算机组成原理"):
+        half = total_min // 2
+        return f"看王道视频 {half}min + 做课后题 {total_min - half}min"
+    if subject == "数学":
+        half = total_min // 2
+        return f"看讲解视频 {half}min + 做基础题 {total_min - half}min"
+    return content
 
 
 def _downgrade_content(content):
@@ -240,14 +370,20 @@ def _downgrade_content(content):
     return f"{content} → 降级为『知识点概念梳理 + 错题回顾』"
 
 
-def _evidence(alert, conclusion=None, replan_count=None, quote_count=2):
-    """结构化「调整依据」：连续失败天数 / 近7天完成率 / 反思原文 / 结论。"""
-    quotes = alert.get("reflection_quotes", [])
+def _evidence(alert, conclusion=None, replan_count=None):
+    """结构化「调整依据」：连续失败天数 / 近7天完成率 / 多维度归因（主因/次因/弱知识点/情绪/依据来源）。
+
+    不再搬运反思原文全文；原文仅留在 memory.json 的 recent_reflections 里供审计。
+    """
     ev = {
         "consecutive_failures": alert["consecutive_failures"],
         "completion_rate": alert["recent_7d_completion_rate"],
-        "reflection_quotes": quotes[-quote_count:] if quotes else [],
-        "conclusion": conclusion or alert["primary_cause"],
+        "primary_cause": alert.get("primary_cause", ""),
+        "secondary_cause": alert.get("secondary_cause", ""),
+        "weak_topics": alert.get("weak_topics", []),
+        "emotion": alert.get("emotion", ""),
+        "evidence_source": alert.get("evidence_source", ""),
+        "conclusion": conclusion or alert.get("primary_cause", ""),
     }
     if replan_count is not None:
         ev["replan_count"] = replan_count
@@ -317,12 +453,17 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None)
             })
         # 严重度高且连续失败恰好 3 天 → 减少时长 + 拆分任务
         elif sev == "high" and fails == 3:
-            task["content"] = _split_content(task["content"])
-            reduced = round(task["planned_hours"] - replan_cfg.get("split_reduction", 0.5), 1)
-            # 不小于保底时长，避免 0.5h 的任务被减成 0h（用户反馈：英语 0.5h 拖延两次后变 0h）
-            task["planned_hours"] = max(reduced, rules.get("min_floor", 0.5))
+            original_hours = float(task.get("planned_hours") or 0)
+            reduced = round(original_hours - replan_cfg.get("split_reduction", 0.5), 2)
+            half = round(original_hours * 0.5, 2)
+            # 拆分后总时长不得为 0：缩减后若 ≤ 原时长×0.5，强制取原时长×0.5
+            new_hours = max(reduced, half)
+            if new_hours <= 0:
+                new_hours = rules.get("min_floor", 0.5)  # 兜底，绝不 0h
+            task["planned_hours"] = new_hours
+            task["content"] = _split_content(task["content"], subject, new_hours)
             task["flag"] = "split"
-            calibrate_slots(task)  # 时长变化后校准时段（1.5h→1.0h：20:30-22:00 → 20:30-21:30）
+            calibrate_slots(task)  # 时长变化后按新 planned_hours 重算时段
             adjustments.append({
                 "task_id": task["task_id"],
                 "subject": subject,
@@ -395,13 +536,20 @@ def replan(current_plan, diagnosis, learning_memory, replan_count=0, rules=None)
                     {
                         "consecutive_failures": info.get("consecutive_failures", 0),
                         "recent_7d_completion_rate": info.get("recent_7d_completion_rate", 0),
-                        "reflection_quotes": [r.get("text", "") for r in info.get("recent_reflections", [])],
-                        "primary_cause": "拖延代价超阈值",
+                        **_attribute_reflections(
+                            [r.get("text", "") for r in info.get("recent_reflections", [])]
+                        ),
+                        "evidence_source": (
+                            f"近 {len(info.get('recent_reflections', []))} 条反思"
+                            f" + 拖延代价 {hours}h"
+                        ),
                     },
                     conclusion=f"拖延代价 {hours}h，安排 {catch_up}h 独立补欠任务",
                 ),
             })
 
+    # 调整可能导致同一天任务时段重叠，统一做一次小范围顺延（顺延到上一任务之后）
+    new_plan = _resolve_slot_conflicts(new_plan)
     return new_plan, adjustments
 
 
@@ -580,48 +728,17 @@ def allocate(learning_memory, current_plan, daily_available_hours, rules=None, t
 # 升级 ②：interpret_feedback —— 用户自然语言反馈理解
 # ============================================================================
 
-WEAK_TOPIC_KEYWORDS = {
-    "链表": "链表", "指针": "指针", "二叉树": "二叉树", "树": "树", "图": "图",
-    "存储": "存储器", "Cache": "Cache", "cache": "Cache",
-    "极限": "极限", "导数": "导数", "积分": "积分", "中值定理": "中值定理", "泰勒": "泰勒",
-    "单词": "单词", "长难句": "长难句",
-}
-
-
 def _keyword_feedback(text):
-    """确定性关键词抽取（LLM 降级时的兜底）。"""
-    t = text or ""
-    attribution = "动力/计划匹配度不足"
-    if any(k in t for k in ("方法", "不会", "卡", "懵", "写不出", "看不懂", "做不出来")):
-        attribution = "方法不当（理解未内化，看得懂但写不出）"
-    elif any(k in t for k in ("时间", "困", "不够", "来不及")):
-        attribution = "时间投入不足"
-    elif any(k in t for k in ("怀疑", "太难", "定太高", "焦虑", "崩溃")):
-        attribution = "目标与当前能力不匹配"
-
-    if any(k in t for k in ("焦虑", "崩溃", "怀疑")):
-        mood = "焦虑"
-    elif any(k in t for k in ("难", "吃力", "懵", "不会", "卡", "写不出")):
-        mood = "低落"
-    elif any(k in t for k in ("好", "顺", "完成", "开心")):
-        mood = "积极"
-    else:
-        mood = "平静"
-
-    weak = []
-    for kw, topic in WEAK_TOPIC_KEYWORDS.items():
-        if kw in t and topic not in weak:
-            weak.append(topic)
-
-    suggestion = (
-        f"针对弱知识点「{'、'.join(weak)}」安排专项突破，并控制单次时长" if weak
-        else "保持当前节奏，注意劳逸结合"
-    )
-    return {"attribution": attribution, "weak_topics": weak, "mood": mood, "suggestion": suggestion}
+    """确定性关键词抽取（LLM 降级时的兜底）—— 与 _attribute_reflections 同一套维度。"""
+    return _attribute_reflections([text or ""])
 
 
 def _parse_llm_feedback(llm_text):
-    """解析 LLM 返回的反馈 JSON（容忍 markdown 代码块围栏）。"""
+    """解析 LLM 返回的反馈 JSON（容忍 markdown 代码块围栏）。
+
+    新格式：{primary_cause, secondary_cause, weak_topics, emotion, evidence_summary}
+    兼容旧字段：attribution→primary_cause，mood→emotion。
+    """
     import json as _json
     txt = (llm_text or "").strip()
     if txt.startswith("```"):
@@ -640,35 +757,43 @@ def _parse_llm_feedback(llm_text):
             return None
     if not isinstance(obj, dict):
         return None
+    primary = obj.get("primary_cause") or obj.get("attribution") or ""
+    secondary = obj.get("secondary_cause") or ""
+    emotion = obj.get("emotion") or obj.get("mood") or ""
+    weak = obj.get("weak_topics") or []
+    if isinstance(weak, str):
+        weak = [w.strip() for w in weak.split("、") if w.strip()]
     return {
-        "attribution": obj.get("attribution", ""),
-        "weak_topics": obj.get("weak_topics", []) or [],
-        "mood": obj.get("mood", ""),
-        "suggestion": obj.get("suggestion", ""),
+        "primary_cause": primary,
+        "secondary_cause": secondary,
+        "weak_topics": weak,
+        "emotion": emotion,
+        "evidence_summary": obj.get("evidence_summary") or "",
     }
 
 
 def interpret_feedback(text, llm_text=None):
-    """Skill 4：理解用户自然语言反馈 → 结构化信号 {归因/弱知识点/情绪/建议}。
+    """Skill 4：理解用户自然语言反馈 → 结构化信号。
 
+    返回 {primary_cause, secondary_cause, weak_topics, emotion, evidence_summary, source, evidence}。
     llm_text：LLM 返回的 JSON 字符串（可选）。为空或解析失败时走关键词匹配降级。
     """
     def _evidence_for(result, method):
-        signals = "；".join(
-            [f"归因={result.get('attribution') or '—'}"]
-            + ([f"弱知识点={'、'.join(result.get('weak_topics') or [])}"]
-               if result.get("weak_topics") else [])
-            + [f"情绪={result.get('mood') or '—'}"]
-        )
-        return [
-            f"反思原文：{text}",
-            f"匹配方式：{method}",
-            f"匹配到的信号：{signals}",
-        ]
+        lines = []
+        if result.get("primary_cause"):
+            lines.append(f"主因：{result['primary_cause']}")
+        if result.get("secondary_cause"):
+            lines.append(f"次因：{result['secondary_cause']}")
+        if result.get("weak_topics"):
+            lines.append(f"弱知识点：{'、'.join(result['weak_topics'])}")
+        if result.get("emotion"):
+            lines.append(f"情绪状态：{result['emotion']}")
+        lines.append(f"依据来源：{method}")
+        return lines
 
     if llm_text:
         parsed = _parse_llm_feedback(llm_text)
-        if parsed:
+        if parsed and parsed.get("primary_cause"):
             result = {**parsed, "source": "llm"}
             result["evidence"] = _evidence_for(result, "LLM 结构化抽取")
             return result

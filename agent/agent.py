@@ -37,15 +37,20 @@ SYSTEM_PROMPT = (
     "5) proactive_scan_skill 事前冲突扫描与削峰填谷；"
     "6) reschedule_for_calendar_change_skill 课表变动时重排受影响任务。"
     "请基于工具返回的数据，用中文输出一份可解释决策日志，"
-    "逐条说明「调整了什么、为什么调整、依据是什么」，并引用反思原文。"
+    "逐条说明「调整了什么、为什么调整、依据是什么」，只引用工具返回的提炼结论"
+    "（主因/次因/弱知识点/情绪），不要搬运或复述反思原文。"
     "不要编造工具结果，只基于工具返回的数据作答。"
 )
 
 FEEDBACK_SYSTEM_PROMPT = (
     "你是学习规划 Agent 的反馈理解器。用户会给你一段学习反思原文，"
-    "请抽取为 JSON：{\"attribution\": 归因(方法/时间/目标/其他), "
-    "\"weak_topics\": [弱知识点列表], \"mood\": 情绪(低落/焦虑/平静/积极), "
-    "\"suggestion\": 一句话建议}。只输出 JSON，不要多余文字。"
+    "请从「方法不当 / 情绪干扰 / 精力不足 / 目标不清晰 / 时间投入不足 / "
+    "任务过载 / 基础薄弱 / 环境干扰」等维度判断归因，"
+    "并只输出一个 JSON，不要多余文字，格式："
+    "{\"primary_cause\": 主因, \"secondary_cause\": 次因(可为空字符串), "
+    "\"weak_topics\": [弱知识点列表], \"emotion\": 情绪(低落/焦虑/疲惫/积极/平静), "
+    "\"evidence_summary\": 一句话提炼结论}。"
+    "注意：不要复述反思原文，evidence_summary 要概括而不是逐字引用。"
 )
 
 
@@ -81,7 +86,7 @@ class LearningPlannerAgent:
     def _build_agent(self):
         @tool(description=(
             "对当前学习记忆做诊断：返回整体状态、预警科目"
-            "（严重度 / 连续失败天数 / 近7天完成率 / 原因 / 主因 / 反思原文引用）与健康科目。"
+            "（严重度 / 连续失败天数 / 近7天完成率 / 原因 / 多维度归因）与健康科目。"
         ))
         def diagnose_skill() -> dict:
             return skills.diagnose(
@@ -124,7 +129,7 @@ class LearningPlannerAgent:
         # 升级 ②：用户自然语言反馈理解
         @tool(description=(
             "理解用户自然语言反馈（反思/碎碎念原文）：抽取结构化信号"
-            "（归因 / 弱知识点 / 情绪 / 建议）。"
+            "（主因 / 次因 / 弱知识点 / 情绪 / 提炼结论）。"
         ))
         def interpret_feedback_skill(text: str) -> dict:
             return self._interpret_feedback(text)
@@ -279,9 +284,14 @@ class LearningPlannerAgent:
         diag = structured["diagnosis"]
         lines = ["（离线降级：以下为确定性规则输出，未调用 LLM）"]
         for a in diag["alert_subjects"]:
+            cause = f"主因：{a['primary_cause']}"
+            if a.get("secondary_cause"):
+                cause += f"；次因：{a['secondary_cause']}"
+            if a.get("weak_topics"):
+                cause += f"；弱知识点：{'、'.join(a['weak_topics'])}"
             lines.append(
                 f"【{a['subject']}】严重度 {a['severity']}，连续失败 {a['consecutive_failures']} 天，"
-                f"主因：{a['primary_cause']}。"
+                f"{cause}；情绪：{a.get('emotion', '')}。"
             )
         for adj in structured["adjustments"]:
             ev = adj.get("evidence", {})
@@ -290,10 +300,16 @@ class LearningPlannerAgent:
                     f"连续失败 {ev.get('consecutive_failures')} 天",
                     f"完成率 {ev.get('completion_rate', 0):.0%}",
                 ]
-                quotes = ev.get("reflection_quotes") or []
-                if quotes:
-                    parts.append(f"反思「{quotes[-1]}」")
-                parts.append(f"结论：{ev.get('conclusion', '')}")
+                if ev.get("primary_cause"):
+                    parts.append(f"主因：{ev.get('primary_cause')}")
+                if ev.get("secondary_cause"):
+                    parts.append(f"次因：{ev.get('secondary_cause')}")
+                if ev.get("weak_topics"):
+                    parts.append(f"弱知识点：{'、'.join(ev.get('weak_topics'))}")
+                if ev.get("emotion"):
+                    parts.append(f"情绪：{ev.get('emotion')}")
+                if ev.get("conclusion"):
+                    parts.append(f"结论：{ev.get('conclusion')}")
                 ev_str = "；".join(parts)
             else:
                 ev_str = ev
