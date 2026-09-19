@@ -1804,6 +1804,11 @@ function renderChatBubble(m) {
       ? '<div class="chat-plan-applied">✅ 已应用到计划</div>'
       : '<button class="btn btn-primary chat-apply-btn" data-chat-apply="' + escapeHtml(m.id) + '">✅ 应用到计划</button>';
   }
+  if (m.writeback) {
+    html += m.writebackApplied
+      ? '<div class="chat-plan-applied">📝 已记入学习记忆</div>'
+      : '<button class="btn btn-ghost chat-apply-btn" data-chat-writeback="' + escapeHtml(m.id) + '">📝 记入学习记忆</button>';
+  }
   if (m.used_llm === false && !m.welcome && !m.error) {
     html += '<div class="chat-mode-tag">规则引擎回复（未使用 LLM）</div>';
   }
@@ -1898,6 +1903,7 @@ async function sendChatMessage(rawText) {
       skill: data.skill,
       payload: data.payload,
       used_llm: data.used_llm,
+      writeback: data.writeback,
       ts: Date.now(),
     });
     saveState(st);
@@ -1943,6 +1949,32 @@ async function applyChatPlan(msgId, btn) {
 
 function assertApiOkAlias(res) { assertApiOk(res, '重新规划 /api/replan'); }
 
+/* 聊天里的「记入学习记忆」：把情绪反馈写回 memory（弱知识点 + 反思原文），需用户显式确认 */
+async function applyChatWriteback(msgId, btn) {
+  const state = loadState();
+  const msg = getChatMessages(state).filter(function (m) { return m.id === msgId; })[0];
+  if (!msg || !msg.writeback || msg.writebackApplied) return;
+  btn.disabled = true;
+  btn.textContent = '记录中…';
+  try {
+    const res = await fetch(BACKEND_URL + '/api/chat_writeback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg.writeback),
+    });
+    assertApiOk(res, '记入学习记忆 /api/chat_writeback');
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '写回失败');
+    msg.writebackApplied = true;
+    saveState(state);
+    renderChat();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '📝 记入学习记忆（重试）';
+    alert('记入失败：' + agentErrMsg(err));
+  }
+}
+
 function bindChatEvents() {
   const input = document.getElementById('chatInput');
   const sendBtn = document.getElementById('chatSendBtn');
@@ -1983,6 +2015,13 @@ function bindChatEvents() {
     const btn = e.target.closest('[data-chat-apply]');
     if (!btn) return;
     applyChatPlan(btn.dataset.chatApply, btn);
+  });
+
+  // 「记入学习记忆」按钮：事件委托
+  document.getElementById('chatMessages').addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-chat-writeback]');
+    if (!btn) return;
+    applyChatWriteback(btn.dataset.chatWriteback, btn);
   });
 }
 

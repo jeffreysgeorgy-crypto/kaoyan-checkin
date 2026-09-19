@@ -689,6 +689,52 @@ def chat_endpoint(payload: dict):
         return _err(str(exc))
 
 
+@app.post("/api/chat_writeback")
+def chat_writeback_endpoint(payload: dict):
+    """把自由对话里的情绪反馈（弱知识点 + 反思原文）写回学习记忆（拓展⑥）。
+
+    前端只在用户点「记入学习记忆」后才调用；本接口只写 learning_memory 的 weak_topics 与
+    recent_reflections，不落其它盘。subject 缺失时按弱知识点反推科目，反推不出则只记反思。
+    """
+    try:
+        payload = payload if isinstance(payload, dict) else {}
+        subject = (payload.get("subject") or "").strip()
+        weak_topics = [w for w in (payload.get("weak_topics") or []) if w]
+        reflection = (payload.get("reflection") or "").strip()
+        if not reflection and not weak_topics:
+            return _err("没有可写回的内容")
+
+        memory = _load_memory_safe()
+        subjects = memory.setdefault("learning_memory", {}).setdefault("subjects", {})
+        if not subject:
+            subject = skills.infer_subject_from_topics(weak_topics)
+        if subject and subject not in subjects:
+            subjects[subject] = {}
+
+        added = []
+        target = subjects.get(subject) if subject else None
+        if target is not None:
+            wt = target.setdefault("weak_topics", [])
+            for w in weak_topics:
+                if w not in wt:
+                    wt.append(w)
+                    added.append(w)
+            if reflection:
+                refs = target.setdefault("recent_reflections", [])
+                if not any(r.get("text") == reflection for r in refs):
+                    refs.append({
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "text": "自由对话情绪反馈：" + reflection,
+                    })
+            _save_memory(memory)
+
+        _log(f"[chat_writeback] subject={subject or '（未定位）'} 新增弱知识点 {len(added)} 个")
+        return {"status": "ok", "subject": subject, "added_weak_topics": added}
+    except Exception as exc:
+        _log(f"[chat_writeback] 错误：{exc}")
+        return _err(str(exc))
+
+
 @app.post("/api/upload_mistake")
 async def upload_mistake(file: UploadFile = File(...), tag: str = Form(None)):
     """接收错题本照片（multipart/form-data）。

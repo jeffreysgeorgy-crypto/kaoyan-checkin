@@ -458,7 +458,7 @@ class LearningPlannerAgent:
     # 任何 LLM 故障都降级为模板回复。plan 意图只出建议，不写文件（用户在前端点确认才应用）。
 
     def chat(self, message, history=None, scan_days=None, backlog=0):
-        """自由对话入口。返回 {reply, intent, skill, payload, type, used_llm}。"""
+        """自由对话入口。返回 {reply, intent, skill, payload, type, used_llm, writeback}。"""
         history = history or []
         intent, slots = self._classify_chat_intent(message, history)
         skill_name, structured = self._run_chat_skill(
@@ -471,6 +471,20 @@ class LearningPlannerAgent:
             msg_type = "card"
         else:
             msg_type = "text"
+
+        # 拓展⑥：情绪反馈写回建议（仅建议，不落盘）。能定位到科目时才给，用户点了「记入」才写。
+        writeback = None
+        if intent == "emotion" and structured:
+            weak_topics = [w for w in (structured.get("weak_topics") or [])]
+            subject = slots.get("subject") or skills.infer_subject_from_topics(weak_topics)
+            if subject:
+                writeback = {
+                    "subject": subject,
+                    "weak_topics": weak_topics,
+                    "emotion": structured.get("emotion") or "",
+                    "reflection": message,
+                }
+
         return {
             "reply": reply,
             "intent": intent,
@@ -478,6 +492,7 @@ class LearningPlannerAgent:
             "payload": structured,
             "type": msg_type,
             "used_llm": used_llm,
+            "writeback": writeback,
         }
 
     # ---------- 1) 意图识别：LLM JSON 优先，关键词规则兜底 ----------
