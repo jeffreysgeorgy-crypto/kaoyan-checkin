@@ -564,11 +564,22 @@ class LearningPlannerAgent:
         "计算机网络": ("计算机网络", "计网"),
     }
 
-    def _classify_chat_intent(self, message, history=None):
-        """返回 (intent, {"subject": ..., "topic": ...})。LLM 失败/无 key 走关键词。
+    # 关键词能直接判定的「控制类」意图：命中即返回，省一次 LLM 意图识别（拓展⑧）。
+    # resource（要抽具体知识点）与 chat（无关键词的开放句）仍需 LLM。
+    _KEYWORD_DIRECT_INTENTS = {"plan", "load", "goal", "emotion", "status"}
 
-        history 提供多轮上下文：追问句（「那指针呢」）没提科目时，从最近几轮继承 subject；
-        LLM 模式下把最近上下文一并喂给意图识别器，让「那…呢」能对上上一轮。
+    def _match_intent_keywords(self, message):
+        """按 _INTENT_KEYWORDS 顺序返回第一个命中意图；未命中返回 None。"""
+        for intent, kws in self._INTENT_KEYWORDS:
+            if any(k in message for k in kws):
+                return intent
+        return None
+
+    def _classify_chat_intent(self, message, history=None):
+        """返回 (intent, {"subject": ..., "topic": ...})。
+
+        history 提供多轮上下文：追问句（「那指针呢」）没提科目时，从最近几轮继承 subject。
+        关键词命中的控制类意图直接判定（省 token）；resource/chat/未命中走 LLM，失败兜底关键词。
         """
         history = history or []
         slots = {"subject": "", "topic": ""}
@@ -589,6 +600,12 @@ class LearningPlannerAgent:
                     if slots["subject"]:
                         break
 
+        keyword_intent = self._match_intent_keywords(message)
+        # 拓展⑧：控制类意图关键词足够明确，直接判定，省一次 LLM 意图识别（省 token）
+        if keyword_intent in self._KEYWORD_DIRECT_INTENTS:
+            return keyword_intent, slots
+
+        # resource / chat / 未命中 → LLM 判断（可抽 topic）；失败再兜底
         if self.env["ready"] and self._llm_fail_streak < 3:
             try:
                 ctx = ""
@@ -611,11 +628,7 @@ class LearningPlannerAgent:
             except Exception:
                 self._llm_fail_streak += 1
 
-        # 关键词兜底
-        for intent, kws in self._INTENT_KEYWORDS:
-            if any(k in message for k in kws):
-                return intent, slots
-        return "chat", slots
+        return keyword_intent or "chat", slots
 
     # ---------- 2) 规则层执行对应 Skill（确定性数据，不落盘）----------
 
