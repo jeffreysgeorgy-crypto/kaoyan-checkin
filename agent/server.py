@@ -765,10 +765,11 @@ def chat_writeback_endpoint(payload: dict):
                     added.append(w)
             if reflection:
                 refs = target.setdefault("recent_reflections", [])
-                if not any(r.get("text") == reflection for r in refs):
+                full_text = "自由对话情绪反馈：" + reflection
+                if not any(r.get("text") == full_text for r in refs):
                     refs.append({
                         "date": datetime.now().strftime("%Y-%m-%d"),
-                        "text": "自由对话情绪反馈：" + reflection,
+                        "text": full_text,
                     })
             _save_memory(memory)
 
