@@ -2058,6 +2058,7 @@ async function applyChatWriteback(msgId, btn) {
     assertApiOk(res, '记入学习记忆 /api/chat_writeback');
     const data = await res.json();
     if (data.status !== 'ok') throw new Error(data.message || '写回失败');
+    recordChatFeedback(state, msg.writeback); // 同步到前端 localStorage，避免下次导出被冲掉
     msg.writebackApplied = true;
     saveState(state);
     renderChat();
@@ -2066,6 +2067,26 @@ async function applyChatWriteback(msgId, btn) {
     btn.textContent = '📝 记入学习记忆（重试）';
     alert('记入失败：' + agentErrMsg(err));
   }
+}
+
+/* 把聊天写回的弱知识点 + 反思同步进前端 localStorage（拓展⑥补全）。
+   这样下次「导出并发送 Agent」重建 memory.json 时不会丢；只去重、不覆盖错题本。 */
+function recordChatFeedback(state, wb) {
+  if (!wb || !wb.subject) return;
+  state.chatFeedback = state.chatFeedback || [];
+  const fullText = '自由对话情绪反馈：' + (wb.reflection || '');
+  const dup = state.chatFeedback.some(function (f) {
+    return f.subject === wb.subject && f.text === fullText;
+  });
+  if (!dup) {
+    state.chatFeedback.push({
+      date: todayStr(),
+      text: fullText,
+      subject: wb.subject,
+      weak_topics: (wb.weak_topics || []).slice(),
+    });
+  }
+  if (state.chatFeedback.length > 30) state.chatFeedback = state.chatFeedback.slice(-30);
 }
 
 function bindChatEvents() {
@@ -4882,7 +4903,23 @@ function collectReflections(state) {
     }
     texts.forEach(function (t) { out.push({ date: dateStr, text: t }); });
   });
+  // 聊天里「记入学习记忆」的情绪反馈也并入反思（近 7 天），让导出后仍被 diagnose 归因
+  (state.chatFeedback || []).forEach(function (f) {
+    if (f.date && f.date >= cutoff && f.text) out.push({ date: f.date, text: f.text });
+  });
   return out;
+}
+
+/* 合并错题本弱知识点 + 聊天写回的弱知识点（去重保序） */
+function mergeChatWeakTopics(esWeak, state, label) {
+  const out = (esWeak || []).slice();
+  (state.chatFeedback || []).forEach(function (f) {
+    if (f.subject !== label) return;
+    (f.weak_topics || []).forEach(function (t) {
+      if (t && out.indexOf(t) < 0) out.push(t);
+    });
+  });
+  return out.slice(0, 5);
 }
 
 /* 把 localStorage 汇总成 Agent 的 memory.json（掌握度按公式计算，不硬编码） */
@@ -4927,7 +4964,7 @@ function buildAgentMemory(state) {
         count: procCount,
       },
       focus_minutes: focusMinutes,
-      weak_topics: es.weak,
+      weak_topics: mergeChatWeakTopics(es.weak, state, m.label),
       recent_reflections: reflections,
     };
   });
