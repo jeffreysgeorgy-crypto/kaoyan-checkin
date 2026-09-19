@@ -8,6 +8,7 @@
 {
   "user_profile":   { /* 用户画像 */ },
   "current_plan":   { /* 当前学习计划 */ },
+  "schedule":       { /* 本学期课表（目标拆解的模块覆盖来源之一） */ },
   "learning_memory":{ /* 学习记忆（各科目画像） */ },
   "rules":          { /* 重规划触发规则 */ },
   "recent_records": [ /* 近 7 天打卡流水 */ ],

@@ -18,6 +18,7 @@ server.py —— FastAPI 后端：打通 HTML 前端与 Python Agent。
     POST /api/reschedule       课表变动 → 冲突检测 + 重排受影响任务
     POST /api/decompose_goal   目标拆解：知识模块覆盖缺口 + 阶段里程碑
     POST /api/aggregate_resources  按弱知识点聚合分散资源（视频/题/错题本）
+    POST /api/chat              自由对话：意图 → 规则 Skill → LLM 口语化（只读，改计划需前端确认）
     POST /api/parse_schedule   接收课表图片（base64），调硅基流动视觉模型 OCR，返回可编辑条目
     POST /api/upload_mistake   接收错题照片（multipart/form-data），保存到 uploads/ 目录
 
@@ -611,8 +612,10 @@ def decompose_goal_endpoint():
         current_plan = memory.get("current_plan", {})
         learning_memory = memory.get("learning_memory", {})
         rules = memory.get("rules") or None
+        schedule = memory.get("schedule") or None
         _log(f"[decompose_goal] 目标：{user_profile.get('goal', '')}，任务数={len(current_plan.get('tasks', []))}")
-        result = skills.decompose_goal(user_profile, current_plan, learning_memory, rules=rules)
+        result = skills.decompose_goal(user_profile, current_plan, learning_memory,
+                                       rules=rules, schedule=schedule)
         _log(f"[decompose_goal] 需覆盖 {len(result.get('required_modules', []))} 个模块，"
              f"缺口 {len(result.get('missing_modules', []))} 个，当前阶段={result.get('current_stage')}")
         return {"status": "ok", **result}
@@ -646,6 +649,43 @@ def aggregate_resources_endpoint(payload: dict):
         return {"status": "ok", **result}
     except Exception as exc:
         _log(f"[aggregate_resources] 错误：{exc}")
+        return _err(str(exc))
+
+
+@app.post("/api/chat")
+def chat_endpoint(payload: dict):
+    """自由对话（前端聊天页）：用户说任意自然语言 → 意图识别 → 规则层跑对应 Skill
+    → LLM 把结构化结果讲成口语；无 key / LLM 故障时自动降级模板回复。
+
+    输入：{"message": str, "history": [{"role","content"}, ...](可选),
+           "days": [未来7天负荷](可选，负荷意图用), "backlog": int(可选)}
+    输出：{reply, intent, skill, payload, type, used_llm}
+         type=plan_pending 时仅为建议，前端需用户点确认才会真正应用计划（本接口不写盘）。
+    """
+    try:
+        payload = payload if isinstance(payload, dict) else {}
+        message = (payload.get("message") or "").strip()
+        if not message:
+            return _err("消息为空")
+        history = payload.get("history") or []
+        days = payload.get("days") or []
+        backlog = int(payload.get("backlog") or 0)
+
+        memory = _load_memory_safe()
+        try:
+            # 惰性导入：openjiuwen 缺失时不影响其它 11 个纯规则接口
+            from agent import LearningPlannerAgent
+        except ImportError as exc:
+            _log(f"[chat] agent 编排模块不可用：{exc}")
+            return _err("Agent 编排模块未就绪（openJiuwen 依赖缺失），请检查安装")
+
+        planner = LearningPlannerAgent(memory)
+        result = planner.chat(message, history=history, scan_days=days, backlog=backlog)
+        _log(f"[chat] intent={result['intent']} skill={result['skill']} "
+              f"type={result['type']} used_llm={result['used_llm']}")
+        return {"status": "ok", **result}
+    except Exception as exc:
+        _log(f"[chat] 错误：{exc}")
         return _err(str(exc))
 
 

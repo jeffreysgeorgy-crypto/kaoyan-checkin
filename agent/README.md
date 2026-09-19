@@ -161,6 +161,15 @@ py server.py                        # 等价于 py -m uvicorn server:app --reloa
 | POST | `/api/reschedule` | 课表变动 → `reschedule_for_calendar_change` 冲突检测 + 重排，返回新计划 + 调整明细 |
 | POST | `/api/parse_schedule` | 接收课表图片（base64）→ 硅基流动视觉模型 OCR → 返回可编辑课表条目 |
 | POST | `/api/upload_mistake` | 接收错题照片（`UploadFile` + `Form` 标签）；Supabase 已配置则存 Storage 并返回公开 URL，否则存本地 `uploads/` |
+| POST | `/api/proactive_scan` | `proactive_scan`：未来 N 天负载扫描（错峰/降级/过载日），只读 |
+| POST | `/api/decompose_goal` | `decompose_goal`：目标拆解（阶段/模块覆盖/缺口/院校建议），只读 |
+| POST | `/api/aggregate_resources` | `aggregate_resources`：薄弱点 → 资源聚合（错因统计/课程资源/真题），只读 |
+| POST | `/api/chat` | 自由对话：LLM 意图识别 → 规则层跑对应 Skill → LLM 口语化讲解；只读、**不落盘** |
+
+> `/api/chat` 是「💬 对话」页的后端：用户可随时自由发问（状态/计划/负载/目标/资源/情绪/闲聊 7 类意图）。
+> 架构上坚持 **LLM 只负责"听懂"和"讲明白"，数据全部由规则 Skill 计算**；涉及改计划（plan 意图）时只返回建议，
+> 前端展示「✅ 应用到计划」按钮，用户确认后才走 `/api/replan` 落盘。无 key / LLM 超时（45s）自动降级为模板回复，
+> 前端气泡标注「规则引擎回复」。
 
 `/api/replan` 只调用 `skills.py` 的确定性规则，**不 import openjiuwen、不调 LLM**，因此离线 / 无 key /
 openjiuwen 缺失都能稳定返回完整的 `reason` + `evidence`，天然满足「LLM 不可用时降级为规则引擎」；

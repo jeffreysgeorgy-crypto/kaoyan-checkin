@@ -1400,6 +1400,16 @@ function flashAgentError(msg) {
   if (el) el.innerHTML = agentErrorCard(msg) + el.innerHTML;
 }
 
+/* 统一校验后端响应：404 说明正在运行的是旧版 server.py（进程里没有新接口），提示重启 */
+function assertApiOk(res, skillName) {
+  if (res.status === 404) {
+    throw new Error('后端版本过旧（正在运行的服务里没有「' + skillName + '」接口）：请关闭旧的 server.py 进程，重新运行 py server.py，并强制刷新页面（Ctrl+F5）');
+  }
+  if (!res.ok) {
+    throw new Error('后端返回 HTTP ' + res.status);
+  }
+}
+
 /* ---- 各 Skill 结果卡片渲染 ---- */
 function renderDiagnoseCard(d) {
   const diag = d.diagnosis || {};
@@ -1522,15 +1532,24 @@ function renderDecomposeCard(d) {
   const required = d.required_modules || [];
   const covered = d.covered_modules || [];
   const missing = d.missing_modules || [];
+  const sources = d.covered_sources || {};
   const rate = d.coverage_rate;
   html += '<div class="arc-sub">模块覆盖' + (rate !== null && rate !== undefined ? '（' + Math.round(rate * 100) + '%）' : '') + '</div>';
   if (required.length) {
     required.forEach(function (m) {
       const isCovered = covered.indexOf(m) >= 0;
-      html += '<div class="arc-reason">' + (isCovered ? '✅ ' : '❌ 缺口：') + escapeHtml(m) + '</div>';
+      const src = sources[m] ? '（' + escapeHtml(sources[m]) + '）' : '';
+      html += '<div class="arc-reason">' + (isCovered ? '✅ ' + escapeHtml(m) + src : '❌ 缺口：' + escapeHtml(m)) + '</div>';
     });
   } else {
     html += '<div class="arc-reason">未在目标中识别到已知科目关键词</div>';
+  }
+  const pcs = d.public_courses || [];
+  if (pcs.length) {
+    html += '<div class="arc-sub">考研公共课（必考，不计入缺口）</div>';
+    pcs.forEach(function (c) {
+      html += '<div class="arc-reason">' + (c.covered ? '✅ ' + escapeHtml(c.name) + '（' + escapeHtml((c.sources || []).join('、')) + '）' : '⚠️ ' + escapeHtml(c.name) + '：尚未排入计划/课表') + '</div>';
+    });
   }
   if ((d.extra_subjects || []).length) {
     html += '<div class="arc-reason">计划内目标外科目：' + d.extra_subjects.map(escapeHtml).join('、') + '</div>';
@@ -1703,6 +1722,7 @@ async function doDecomposeGoal() {
   setBtnLoading(btn, true);
   try {
     const res = await fetch(BACKEND_URL + '/api/decompose_goal', { method: 'POST' });
+    assertApiOk(res, '目标拆解 /api/decompose_goal');
     const data = await res.json();
     if (data.status !== 'ok') throw new Error(data.message || '目标拆解失败');
     saveAgentResult('decompose', data);
@@ -1727,6 +1747,7 @@ async function doAggregateResources() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ weak_topics: weakTopics }),
     });
+    assertApiOk(res, '资源聚合 /api/aggregate_resources');
     const data = await res.json();
     if (data.status !== 'ok') throw new Error(data.message || '资源聚合失败');
     saveAgentResult('aggregate', data);
@@ -1737,6 +1758,237 @@ async function doAggregateResources() {
   } finally {
     setBtnLoading(btn, false);
   }
+}
+
+/* ==================== 💬 自由对话（聊天页） ==================== */
+
+const CHAT_WELCOME = '你好呀，我是你的学习规划 Agent。可以跟我说任何事：学习状态、学不懂的知识点、心情低落、未来几天的安排……我会先翻你的真实学习数据再回答。改计划这种事我只给建议，你点头了才会动。';
+const CHAT_TYPING_HINTS = [
+  '正在翻你的学习记忆…',
+  '正在核对各科完成率与预警…',
+  '正在想怎么跟你说比较好…',
+  '正在对照规则分析你的情况…',
+];
+
+function getChatMessages(state) {
+  if (!Array.isArray(state.agentChat)) state.agentChat = [];
+  return state.agentChat;
+}
+
+function renderChat() {
+  const state = loadState();
+  const msgs = getChatMessages(state);
+  if (!msgs.length) {
+    msgs.push({ id: 'welcome', role: 'agent', text: CHAT_WELCOME, ts: Date.now(), welcome: true });
+    saveState(state);
+  }
+  const box = document.getElementById('chatMessages');
+  if (!box) return;
+  box.innerHTML = msgs.map(renderChatBubble).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderChatBubble(m) {
+  if (m.role === 'user') {
+    return '<div class="chat-row user"><div class="chat-bubble user">' +
+      escapeHtml(m.text).replace(/\n/g, '<br>') + '</div></div>';
+  }
+  let html = '<div class="chat-row agent"><div class="chat-avatar">💬</div><div class="chat-bubble agent">' +
+    '<div class="chat-text">' + escapeHtml(m.text || '').replace(/\n/g, '<br>') + '</div>';
+  if (m.error) html = '<div class="chat-row agent"><div class="chat-avatar">💬</div><div class="chat-bubble agent chat-error-bubble">' +
+    '<div class="chat-text">⚠️ ' + escapeHtml(m.text || '') + '</div>';
+  const card = renderChatSkillCard(m);
+  if (card) html += card;
+  if (m.type === 'plan_pending' && (m.payload || {}).adjustments && m.payload.adjustments.length) {
+    html += m.applied
+      ? '<div class="chat-plan-applied">✅ 已应用到计划</div>'
+      : '<button class="btn btn-primary chat-apply-btn" data-chat-apply="' + escapeHtml(m.id) + '">✅ 应用到计划</button>';
+  }
+  if (m.used_llm === false && !m.welcome && !m.error) {
+    html += '<div class="chat-mode-tag">规则引擎回复（未使用 LLM）</div>';
+  }
+  return html + '</div></div>';
+}
+
+function renderChatSkillCard(m) {
+  const p = m.payload;
+  if (!p || !m.skill) return '';
+  try {
+    if (m.skill === 'diagnose') return renderDiagnoseCard(p);
+    if (m.skill === 'replan') return renderReplanCard(p);
+    if (m.skill === 'decompose_goal') return renderDecomposeCard(p);
+    if (m.skill === 'aggregate_resources') return renderAggregateCard(p);
+    if (m.skill === 'proactive_scan') {
+      // skills 原始字段 moves/degraded → 卡片期望的 peak_shaving/downgrade
+      return renderScanCard(Object.assign({}, p, {
+        peak_shaving: p.moves || [],
+        downgrade: p.degraded || [],
+      }));
+    }
+  } catch (e) { /* 卡片渲染失败不影响文字回复 */ }
+  return '';
+}
+
+function showChatTyping() {
+  const box = document.getElementById('chatMessages');
+  if (!box) return;
+  const hints = CHAT_TYPING_HINTS;
+  box.insertAdjacentHTML('beforeend',
+    '<div class="chat-row agent" id="chatTyping"><div class="chat-avatar">💬</div>' +
+    '<div class="chat-bubble agent chat-typing"><span class="typing-dot"></span>' +
+    '<span class="typing-text">' + escapeHtml(hints[0]) + '</span></div></div>');
+  box.scrollTop = box.scrollHeight;
+  let i = 0;
+  return setInterval(function () {
+    i = (i + 1) % hints.length;
+    const el = document.querySelector('#chatTyping .typing-text');
+    if (el) el.textContent = hints[i];
+  }, 2200);
+}
+
+function hideChatTyping(timer) {
+  if (timer) clearInterval(timer);
+  const el = document.getElementById('chatTyping');
+  if (el) el.remove();
+}
+
+async function sendChatMessage(rawText) {
+  const text = (rawText || '').trim();
+  if (!text) return;
+  const state = loadState();
+  const msgs = getChatMessages(state);
+  msgs.push({ id: 'u' + Date.now(), role: 'user', text: text, ts: Date.now() });
+  saveState(state);
+  renderChat();
+
+  const input = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  if (input) input.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = '思考中'; }
+  const timer = showChatTyping();
+
+  // 给后端的上下文：真实问答各最近 5 轮（不含欢迎语/错误气泡）
+  const history = msgs
+    .filter(function (m) { return !m.welcome && !m.error && m.text; })
+    .slice(-10)
+    .map(function (m) {
+      return { role: m.role === 'user' ? 'user' : 'assistant', content: m.text.slice(0, 600) };
+    });
+
+  try {
+    const res = await fetch(BACKEND_URL + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: history,
+        days: buildProactiveDays(),
+        backlog: countUnmasteredMistakes(loadState()),
+      }),
+    });
+    assertApiOk(res, '自由对话 /api/chat');
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '对话失败');
+    const st = loadState();
+    getChatMessages(st).push({
+      id: 'a' + Date.now(),
+      role: 'agent',
+      text: data.reply,
+      type: data.type,
+      skill: data.skill,
+      payload: data.payload,
+      used_llm: data.used_llm,
+      ts: Date.now(),
+    });
+    saveState(st);
+  } catch (err) {
+    const st = loadState();
+    getChatMessages(st).push({
+      id: 'e' + Date.now(), role: 'agent', error: true,
+      text: agentErrMsg(err), ts: Date.now(),
+    });
+    saveState(st);
+  } finally {
+    hideChatTyping(timer);
+    if (input) { input.disabled = false; input.focus(); }
+    if (btn) { btn.disabled = false; btn.textContent = '发送'; }
+    renderChat();
+  }
+}
+
+/* 聊天里的「应用到计划」：走正式 /api/replan 写路径（new_plan + replanning_log 都同步） */
+async function applyChatPlan(msgId, btn) {
+  const state = loadState();
+  const msg = getChatMessages(state).filter(function (m) { return m.id === msgId; })[0];
+  if (!msg || msg.applied) return;
+  btn.disabled = true;
+  btn.textContent = '应用中…';
+  try {
+    const res = await fetch(BACKEND_URL + '/api/replan', { method: 'POST' });
+    assertApiOkAlias(res);
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || '规划失败');
+    applyAgentPlan({ current_plan: data.new_plan, replanning_log: data.replanning_log });
+    saveAgentResult('replan', { adjustments: data.adjustments || [] });
+    msg.applied = true;
+    saveState(state);
+    renderChat();
+    renderAgentResults();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '✅ 应用到计划（重试）';
+    alert('应用失败：' + agentErrMsg(err));
+  }
+}
+
+function assertApiOkAlias(res) { assertApiOk(res, '重新规划 /api/replan'); }
+
+function bindChatEvents() {
+  const input = document.getElementById('chatInput');
+  const sendBtn = document.getElementById('chatSendBtn');
+  if (!input || !sendBtn || input.dataset.chatBound) return;
+  input.dataset.chatBound = '1';
+
+  sendBtn.addEventListener('click', function () {
+    sendChatMessage(input.value);
+    input.value = '';
+    autoGrowChatInput(input);
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage(input.value);
+      input.value = '';
+      autoGrowChatInput(input);
+    }
+  });
+  input.addEventListener('input', function () { autoGrowChatInput(input); });
+
+  document.getElementById('chatQuick').addEventListener('click', function (e) {
+    const chip = e.target.closest('.chat-chip');
+    if (!chip) return;
+    sendChatMessage(chip.dataset.q);
+  });
+
+  document.getElementById('chatClearBtn').addEventListener('click', function () {
+    if (!confirm('确定清空全部对话记录吗？（不影响你的打卡与计划数据）')) return;
+    const st = loadState();
+    st.agentChat = [];
+    saveState(st);
+    renderChat();
+  });
+
+  // 「应用到计划」按钮：事件委托
+  document.getElementById('chatMessages').addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-chat-apply]');
+    if (!btn) return;
+    applyChatPlan(btn.dataset.chatApply, btn);
+  });
+}
+
+function autoGrowChatInput(input) {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
 }
 
 async function doAnalyzeReflect() {
@@ -4178,6 +4430,7 @@ function renderTab(tab) {
   } else if (tab === 'mistakes') renderErrorBook(state);
   else if (tab === 'reflection') renderReflection(state, today);
   else if (tab === 'murmurs') renderMurmurs(state, today);
+  else if (tab === 'chat') renderChat();
   else if (tab === 'stats') renderStats(state);
   else if (tab === 'focus') renderFocusPage(state);
   else if (tab === 'me') renderMe(state);
@@ -4597,6 +4850,9 @@ function buildAgentMemory(state) {
       preferred_start_time: '19:00',
     },
     current_plan: { generated_at: today, date: planDate, tasks: tasks },
+    // 课表随记忆一起导出：目标拆解用课表课程计入模块覆盖（如计组课 → 覆盖计组模块），
+    // 课表重排 Skill 也需要它做 diff
+    schedule: buildSchedulePayload(),
     learning_memory: { subjects: subjects, overall: { last_updated: today } },
     rules: {
       trigger_replan: { consecutive_failures_threshold: 3, completion_rate_threshold: 0.5, lookback_days: 7 },
@@ -4756,6 +5012,9 @@ function bindEvents() {
   document.querySelectorAll('.tabbar .tab').forEach(function (btn) {
     btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
   });
+
+  // 💬 聊天页事件（元素首次渲染后即可绑定，幂等）
+  bindChatEvents();
 
   // 学科切换栏（分类任务清单页）—— document 级委托
   document.addEventListener('click', function (e) {

@@ -39,7 +39,7 @@ Skill 6：reschedule_for_calendar_change(old_schedule, new_schedule, current_pla
     输出：受影响任务 + 重排后计划 + 说明
     调用条件：课表 version 变化时自动触发（version 相同则不重排）。
 
-Skill 7：decompose_goal(user_profile, current_plan, learning_memory, rules=None)
+Skill 7：decompose_goal(user_profile, current_plan, learning_memory, rules=None, schedule=None)
     输入：用户画像（goal / target_date）+ 当前计划 + 学习记忆
     输出：需覆盖模块 / 已覆盖模块 / 缺失模块 / 阶段里程碑 / 当前阶段 / 可解释建议
     调用条件：生成计划前，检查「大目标」是否被完整拆解（命题背景「目标不清」）。
@@ -143,6 +143,25 @@ SUBJECT_TO_MODULE = {
     "操作系统": "操作系统",
     "计算机网络": "计算机网络",
     "英语": "英语",
+}
+
+# 课表课程名关键词 → 知识模块（本学期上课也是一条覆盖途径，不只是计划任务）
+COURSE_MODULE_KEYWORDS = [
+    ("高等数学", ("高等数学", "高数", "数学分析", "微积分")),
+    ("线性代数", ("线性代数", "线代")),
+    ("概率论与数理统计", ("概率论", "概率统计", "随机过程")),
+    ("数据结构", ("数据结构",)),
+    ("计算机组成原理", ("计算机组成原理", "组成原理", "计组")),
+    ("操作系统", ("操作系统",)),
+    ("计算机网络", ("计算机网络", "计网")),
+]
+
+# 考研公共课：只要目标是考研就必考（英语 + 政治），不应被视为「目标外科目」；
+# 课表里的政治类课程（如习思想概论）也算政治覆盖途径
+PUBLIC_COURSE_KEYWORDS = {
+    "英语": ("英语",),
+    "政治": ("政治", "思想政治", "思想道德", "马克思主义", "毛泽东思想",
+             "习近平新时代", "毛概", "马原", "思修", "形势与政策", "中国特色社会主义"),
 }
 
 # Skill 8（资源聚合）：弱知识点 → 该用的资源（视频/课后题/错题本/单词本），把分散资料收拢
@@ -933,10 +952,29 @@ def _parse_llm_feedback(llm_text):
     }
 
 
+# 主因 → 一条具体、可执行的小建议（供 interpret_feedback / 聊天情绪回复使用）
+CAUSE_SUGGESTIONS = {
+    "方法不当": "先看一道同类型的例题再动手，别一上来就啃难题",
+    "情绪干扰": "先把情绪安顿好，只安排最小的一块任务，做完就收工",
+    "精力不足": "今晚先保证睡眠，明天把最难的任务放在状态最好的时段",
+    "目标不清晰": "把大目标拆成今天能做的一小步，先动起来",
+    "时间投入不足": "每天固定一个 25 分钟的番茄钟，先保住最小投入",
+    "任务过载": "砍掉最低优先级的任务，今天只留 1~2 件最重要的",
+    "基础薄弱": "回到对应章节的基础例题，先把概念吃透再刷题",
+    "环境干扰": "换个安静环境，或戴耳机用白噪音隔离一下",
+}
+
+
+def _cause_suggestion(primary_cause):
+    """按主因给一条具体建议；未命中时返回空串。"""
+    return CAUSE_SUGGESTIONS.get(primary_cause or "", "")
+
+
 def interpret_feedback(text, llm_text=None):
     """Skill 4：理解用户自然语言反馈 → 结构化信号。
 
-    返回 {primary_cause, secondary_cause, weak_topics, emotion, evidence_summary, source, evidence}。
+    返回 {primary_cause, secondary_cause, weak_topics, emotion, evidence_summary,
+           suggestion, source, evidence}。
     llm_text：LLM 返回的 JSON 字符串（可选）。为空或解析失败时走关键词匹配降级。
     """
     def _evidence_for(result, method):
@@ -952,15 +990,16 @@ def interpret_feedback(text, llm_text=None):
         lines.append(f"依据来源：{method}")
         return lines
 
+    def _attach(result, method):
+        result["suggestion"] = _cause_suggestion(result.get("primary_cause"))
+        result["evidence"] = _evidence_for(result, method)
+        return result
+
     if llm_text:
         parsed = _parse_llm_feedback(llm_text)
         if parsed and parsed.get("primary_cause"):
-            result = {**parsed, "source": "llm"}
-            result["evidence"] = _evidence_for(result, "LLM 结构化抽取")
-            return result
-    result = {**_keyword_feedback(text), "source": "keyword"}
-    result["evidence"] = _evidence_for(result, "关键词规则（离线）")
-    return result
+            return _attach({**parsed, "source": "llm"}, "LLM 结构化抽取")
+    return _attach({**_keyword_feedback(text), "source": "keyword"}, "关键词规则（离线）")
 
 
 # ============================================================================
@@ -1383,14 +1422,14 @@ def _build_goal_stages(target_date, today, rules):
     return stages, current_stage, remaining_days
 
 
-def decompose_goal(user_profile, current_plan, learning_memory, rules=None, today=None):
+def decompose_goal(user_profile, current_plan, learning_memory, rules=None, today=None, schedule=None):
     """Skill 7：目标拆解。把「考研大目标」拆成知识模块 + 阶段里程碑，检查当前计划覆盖缺口。
 
     对应命题背景「目标不清」：用户只有「2027 考研」一个抽象目标，不知道还差哪些模块、
     每个阶段该干什么。本 Skill 把目标拆成可检查的模块清单，并指出当前计划的缺口。
 
-    输入：用户画像（goal / target_date）+ 当前计划 + 学习记忆 + 规则
-    输出：需覆盖模块 / 已覆盖模块 / 缺失模块 / 阶段里程碑 / 当前阶段 / 可解释建议
+    输入：用户画像（goal / target_date）+ 当前计划 + 学习记忆 + 规则 + 课表（可选）
+    输出：需覆盖模块 / 已覆盖模块（含来源）/ 缺失模块 / 公共课覆盖 / 阶段里程碑 / 可解释建议
     """
     rules = rules or DEFAULT_RULES
     goal = (user_profile or {}).get("goal", "")
@@ -1405,34 +1444,75 @@ def decompose_goal(user_profile, current_plan, learning_memory, rules=None, toda
                 if m not in required:
                     required.append(m)
 
-    # 2) 当前计划里出现的科目模块（含目标之外的公共课，如英语）
-    plan_modules = []
+    is_kaoyan = "考研" in goal
+
+    # 2) 覆盖来源收集：①当前计划任务 ②本学期课表课程（上课也是一条覆盖途径）
+    covered_sources = {}   # 模块 → 来源（"计划任务" / "课表：<课程名>"）
+
     for t in (current_plan or {}).get("tasks", []):
         m = SUBJECT_TO_MODULE.get(t.get("subject"))
-        if m and m not in plan_modules:
-            plan_modules.append(m)
+        if m and m not in covered_sources:
+            covered_sources[m] = "计划任务"
 
-    covered = [m for m in required if m in plan_modules]   # 所需模块中已被覆盖的
-    missing = [m for m in required if m not in plan_modules]
-    extra = [m for m in plan_modules if m not in required]  # 目标之外的科目（英语等），不参与覆盖率
+    for entry in (schedule or {}).get("entries", []):
+        course = (entry.get("course") or "").strip()
+        if not course:
+            continue
+        for module, kws in COURSE_MODULE_KEYWORDS:
+            if any(k in course for k in kws) and module not in covered_sources:
+                covered_sources[module] = f"课表：{course}"
+                break
 
-    # 3) 阶段拆解
+    # 3) 考研公共课（英语/政治）：目标为考研时必考，不算「目标外」；
+    #    覆盖途径 = 计划任务科目 + 课表课程名
+    public_courses = []
+    if is_kaoyan:
+        for name, kws in PUBLIC_COURSE_KEYWORDS.items():
+            sources = []
+            for t in (current_plan or {}).get("tasks", []):
+                if any(k in t.get("subject", "") for k in kws):
+                    sources.append("计划任务")
+                    break
+            for e in (schedule or {}).get("entries", []):
+                course = (e.get("course") or "").strip()
+                if course and any(k in course for k in kws):
+                    sources.append(f"课表：{course}")
+                    break
+            public_courses.append({
+                "name": name,
+                "required": True,
+                "covered": bool(sources),
+                "sources": sources,
+            })
+
+    covered = [m for m in required if m in covered_sources]   # 所需模块中已被覆盖的
+    missing = [m for m in required if m not in covered_sources]
+    extra = [m for m in covered_sources
+             if m not in required and not (is_kaoyan and any(
+                 m == name for name in PUBLIC_COURSE_KEYWORDS))]  # 目标之外的科目，不参与覆盖率
+
+    # 4) 阶段拆解
     stages, current_stage, remaining_days = _build_goal_stages(target_date, today, rules)
 
-    # 4) 可解释建议
+    # 5) 可解释建议
     if not required:
         recommendation = (
             f"未在目标「{goal}」中识别到已知考研科目关键词（数学一/数学二/408），"
-            f"暂无法做模块覆盖检查。当前计划覆盖：{'、'.join(plan_modules) if plan_modules else '无'}。"
+            f"暂无法做模块覆盖检查。当前计划覆盖：{'、'.join(list(covered_sources) ) if covered_sources else '无'}。"
         )
     elif missing:
+        src_note = ""
+        schedule_covered = [m for m in covered if covered_sources[m].startswith("课表")]
+        if schedule_covered:
+            src_note = f"其中 {'、'.join(schedule_covered)} 由本学期课表覆盖（跟着课程走即可保持进度）"
         recommendation = (
-            f"目标需覆盖 {len(required)} 个模块，当前计划仅覆盖 {len(covered)} 个"
+            f"目标需覆盖 {len(required)} 个模块，已覆盖 {len(covered)} 个"
             f"（{'、'.join(covered) if covered else '无'}），缺少：{'、'.join(missing)}。"
-            f"建议在计划中补入这些模块的任务，否则目标可能落空。"
+            + (f"{src_note}。" if src_note else "")
+            + "建议在计划中补入缺失模块的任务，否则目标可能落空。"
         )
     else:
-        recommendation = f"当前计划已覆盖目标全部 {len(required)} 个模块，覆盖完整。"
+        recommendation = f"当前计划与课表已覆盖目标全部 {len(required)} 个模块，覆盖完整。"
 
     return {
         "goal": goal,
@@ -1440,8 +1520,10 @@ def decompose_goal(user_profile, current_plan, learning_memory, rules=None, toda
         "remaining_days": remaining_days,
         "required_modules": required,
         "covered_modules": covered,
+        "covered_sources": covered_sources,
         "missing_modules": missing,
         "extra_subjects": extra,
+        "public_courses": public_courses,
         "coverage_rate": round(len(covered) / len(required), 4) if required else None,
         "stages": stages,
         "current_stage": current_stage,

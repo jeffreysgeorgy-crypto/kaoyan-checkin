@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="考研打卡">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=20260918p2">
+<link rel="stylesheet" href="style.css?v=20260919p1">
 </head>
 <body>
 
@@ -234,6 +234,31 @@
 
   </section>
 
+  <!-- ========== 工作台：对话（Chat） ========== -->
+  <section class="tab-panel" id="panel-chat">
+    <div class="chat-wrap">
+      <div class="chat-head">
+        <div>
+          <h2 class="card-title">💬 和 Agent 聊聊</h2>
+          <p class="hint">说什么都行：问状态、吐苦水、问某个知识点怎么学……它会先算你的真实学习数据再回答，不会瞎编。</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="chatClearBtn">🗑 清空对话</button>
+      </div>
+      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-quick" id="chatQuick">
+        <button class="chat-chip" data-q="帮我看看最近的学习状态怎么样">我最近状态怎么样</button>
+        <button class="chat-chip" data-q="我好累，有点坚持不下去了">好累，想放弃</button>
+        <button class="chat-chip" data-q="我的考研目标还差哪些模块？">目标还差什么</button>
+        <button class="chat-chip" data-q="未来几天忙不忙，时间够吗？">未来几天忙吗</button>
+        <button class="chat-chip" data-q="数据结构学不懂，该看什么资源？">学不懂怎么办</button>
+      </div>
+      <div class="chat-input-bar">
+        <textarea id="chatInput" rows="1" placeholder="跟 Agent 说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button class="btn btn-primary" id="chatSendBtn">发送</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ========== 工作台 7：统计（Stats） ========== -->
   <section class="tab-panel" id="panel-stats">
 
@@ -442,6 +467,7 @@
   <button class="tab" data-tab="mistakes"><span>📚</span>错题</button>
   <button class="tab" data-tab="reflection"><span>📝</span>反思</button>
   <button class="tab" data-tab="murmurs"><span>💭</span>碎碎念</button>
+  <button class="tab" data-tab="chat"><span>💬</span>对话</button>
   <button class="tab" data-tab="stats"><span>📊</span>统计</button>
   <button class="tab" data-tab="me"><span>⚙️</span>我的</button>
   <button class="tab" data-tab="focus"><span>🍅</span>专注</button>
@@ -462,7 +488,7 @@
 <div id="reportRoot" class="report-root"></div>
 
 <script src="data.js?v=20260918p2"></script>
-<script src="app.js?v=20260918p2"></script>
+<script src="app.js?v=20260919p1"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(function (err) {

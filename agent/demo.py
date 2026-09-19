@@ -426,17 +426,23 @@ def demo_decompose_goal(memory):
     print("=" * 72)
     result = skills.decompose_goal(
         memory["user_profile"], memory["current_plan"], memory["learning_memory"],
-        rules=memory.get("rules"),
+        rules=memory.get("rules"), schedule=memory.get("schedule"),
     )
     print(f"目标：{result['goal']}")
     print(f"目标日期：{result['target_date']}（剩余 {result['remaining_days']} 天）")
     print(f"需覆盖模块（{len(result['required_modules'])} 个）：{'、'.join(result['required_modules'])}")
-    print(f"已覆盖模块（{len(result['covered_modules'])} 个）："
-          f"{'、'.join(result['covered_modules']) if result['covered_modules'] else '无'}")
+    for m in result["covered_modules"]:
+        print(f"  ✅ {m}（来源：{result['covered_sources'].get(m, '计划任务')}）")
     if result["missing_modules"]:
         print(f"⚠️ 缺失模块（目标不清的症结）：{'、'.join(result['missing_modules'])}")
     if result.get("extra_subjects"):
-        print(f"目标之外的科目（公共课）：{'、'.join(result['extra_subjects'])}")
+        print(f"目标之外的科目：{'、'.join(result['extra_subjects'])}")
+    if result.get("public_courses"):
+        pc = "　".join(
+            f"{c['name']} {'✅ ' + '、'.join(c['sources']) if c['covered'] else '⚠️ 未排入'}"
+            for c in result["public_courses"]
+        )
+        print(f"考研公共课：{pc}")
     if result["coverage_rate"] is not None:
         print(f"覆盖率：{result['coverage_rate']:.0%}")
     print("阶段里程碑（按剩余天数拆基础/强化/冲刺）：")

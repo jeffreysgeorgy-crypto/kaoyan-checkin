@@ -432,17 +432,42 @@ class TestDecomposeGoal:
     def test_kaoyan_math1_408_seven_modules(self, rules):
         profile = {"goal": "2027 年考研（数学一 + 408 计算机专业基础综合）",
                    "target_date": "2027-12-18"}
-        # 当前计划只覆盖高数 + 英语（英语是目标外科目）
+        # 当前计划只覆盖高数；英语是考研公共课，不算「目标外」
         plan = make_plan([make_task("数学", hours=2.0), make_task("英语", hours=0.8)])
         r = skills.decompose_goal(profile, plan, make_lm({}), rules=rules, today="2026-09-18")
         assert len(r["required_modules"]) == 7
         assert r["covered_modules"] == ["高等数学"]
         assert len(r["missing_modules"]) == 6
         assert r["coverage_rate"] == round(1 / 7, 4)
-        assert r["extra_subjects"] == ["英语"]
+        assert r["extra_subjects"] == []            # 英语归入公共课，不再是目标外
         assert r["remaining_days"] == 456
         assert r["current_stage"] == "基础阶段"
         assert [s["name"] for s in r["stages"]] == ["基础阶段", "强化阶段", "冲刺阶段"]
+        # 公共课：英语已排入计划，政治尚未
+        pcs = {c["name"]: c for c in r["public_courses"]}
+        assert pcs["英语"]["covered"] is True and pcs["英语"]["sources"] == ["计划任务"]
+        assert pcs["政治"]["covered"] is False
+
+    def test_schedule_courses_count_as_coverage(self, rules):
+        """课表里的计组课 + 政治课应计入覆盖（用户本学期在上课，不算缺口）。"""
+        profile = {"goal": "2027 年考研（数学一 + 408 计算机专业基础综合）",
+                   "target_date": "2027-12-18"}
+        plan = make_plan([make_task("数学", hours=2.0)])
+        schedule = {"version": 1, "entries": [
+            {"day_of_week": "周三", "time": "10:10-11:50",
+             "course": "计算机组成原理", "weeks": "1-16"},
+            {"day_of_week": "周二", "time": "14:30-16:10",
+             "course": "习近平新时代中国特色社会主义思想概论", "weeks": "2-17"},
+        ]}
+        r = skills.decompose_goal(profile, plan, make_lm({}), rules=rules,
+                                  today="2026-09-18", schedule=schedule)
+        assert "计算机组成原理" in r["covered_modules"]
+        assert r["covered_sources"]["计算机组成原理"] == "课表：计算机组成原理"
+        assert r["coverage_rate"] == round(2 / 7, 4)
+        pcs = {c["name"]: c for c in r["public_courses"]}
+        assert pcs["政治"]["covered"] is True          # 政治课在课表上
+        assert pcs["政治"]["sources"][0].startswith("课表")
+        assert pcs["英语"]["covered"] is False
 
     def test_math2_only_two_modules(self, rules):
         profile = {"goal": "考研数学二", "target_date": "2027-12-18"}

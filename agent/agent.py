@@ -12,8 +12,10 @@ skills.py 的 8 个 Skill 包装成工具，让 Agent 在 ReAct 循环里自主�
 而 skills.py 是「可解释规则引擎」，保证每一步调整都有据可查。
 """
 
+import json
 import logging
 import os
+import re
 
 import requests
 
@@ -54,6 +56,37 @@ FEEDBACK_SYSTEM_PROMPT = (
     "\"weak_topics\": [弱知识点列表], \"emotion\": 情绪(低落/焦虑/疲惫/积极/平静), "
     "\"evidence_summary\": 一句话提炼结论}。"
     "注意：不要复述反思原文，evidence_summary 要概括而不是逐字引用。"
+)
+
+# ---------- 自由对话（前端聊天页）----------
+# 意图清单：规则层按意图执行对应 Skill，LLM 只负责把结构化结果讲成口语
+CHAT_INTENT_RULES = """\
+status  询问当前学习状态/诊断/最近学得怎么样
+plan    觉得计划跟不上，要求重新规划或调整计划
+load    询问未来几天忙不忙/任务负荷/时间够不够
+goal    询问考研目标还差哪些模块/当前进度
+resource 某知识点学不懂/不会，想要学习资源或补弱方法
+emotion 表达疲惫/焦虑/烦躁/不想学/坚持不下去等情绪
+chat    其他闲聊、打招呼、求鼓励"""
+
+CHAT_INTENT_PROMPT = (
+    "你是学习规划 Agent 的意图识别器。用户会用任意自然语言说话，"
+    "请只输出一个 JSON，不要多余文字：\n"
+    + CHAT_INTENT_RULES + "\n"
+    "格式：{\"intent\": 上述 7 个意图之一, \"subject\": 涉及科目(没有则空字符串), "
+    "\"topic\": 涉及知识点(没有则空字符串)}。"
+)
+
+CHAT_REPLY_PROMPT = (
+    "你是一个陪伴考研学生的个人学习规划 Agent，像耐心的学长/学姐一样用中文口语聊天，"
+    "亲切但不啰嗦（一般 2~4 句）。你会收到「用户的话 + 刚用规则引擎算出的结构化分析结果 JSON」。"
+    "要求：①必须依据 JSON 里的真实数据回答，数字和科目名不许编造；"
+    "②结构为空时可正常闲聊鼓励，但不要虚构学习数据或承诺；"
+    "③结构化结果里没有的具体书名、网课、老师、链接一律不许自行编造；"
+    "数据不足时（如资源类结果为空）说明缺什么数据，并引导用户先做前置操作（如去错题本给错题打知识点标签）；"
+    "④情绪类先共情再给一条具体的小建议；"
+    "⑤plan 类要说明给出了什么调整，并提醒对方需要点确认才会应用到计划；"
+    "⑥不要输出 JSON、不要分点编号，自然成段。"
 )
 
 
@@ -177,6 +210,7 @@ class LearningPlannerAgent:
                 self.memory.get("current_plan", {}),
                 self.memory.get("learning_memory", {}),
                 rules=self.memory.get("rules"),
+                schedule=self.memory.get("schedule"),
             )
 
         # 升级 ⑨：资源聚合（命题背景「资源分散」）——按弱知识点收拢视频/课后题/错题本/单词本
@@ -418,6 +452,278 @@ class LearningPlannerAgent:
                 "used_llm": False,
                 "trace": self.trace,
             }
+
+    # ==================== 自由对话（前端聊天页 /api/chat）====================
+    # 设计原则与 decide() 一致：规则层先把数据算对，LLM 只负责把结果讲成口语；
+    # 任何 LLM 故障都降级为模板回复。plan 意图只出建议，不写文件（用户在前端点确认才应用）。
+
+    def chat(self, message, history=None, scan_days=None, backlog=0):
+        """自由对话入口。返回 {reply, intent, skill, payload, type, used_llm}。"""
+        history = history or []
+        intent, slots = self._classify_chat_intent(message)
+        skill_name, structured = self._run_chat_skill(
+            intent, message, slots, scan_days or [], int(backlog or 0))
+        reply, used_llm = self._compose_chat_reply(message, history, intent, structured)
+
+        if intent == "plan":
+            msg_type = "plan_pending"
+        elif structured is not None:
+            msg_type = "card"
+        else:
+            msg_type = "text"
+        return {
+            "reply": reply,
+            "intent": intent,
+            "skill": skill_name,
+            "payload": structured,
+            "type": msg_type,
+            "used_llm": used_llm,
+        }
+
+    # ---------- 1) 意图识别：LLM JSON 优先，关键词规则兜底 ----------
+
+    _INTENT_KEYWORDS = [
+        ("plan", ("重新规划", "重排", "调整计划", "改计划", "跟不上", "赶不上", "来不及",
+                    "计划太多", "完不成计划", "重新安排")),
+        ("load", ("未来", "接下来", "后面几天", "这几天", "忙不忙", "负荷", "负荷",
+                    "时间够", "排得满", "超载")),
+        ("goal", ("目标", "还差", "模块", "覆盖", "进度", "考什么", "要学哪些")),
+        ("resource", ("学不懂", "学不会", "听不懂", "不会做", "好难", "卡住了", "卡壳",
+                      "不懂", "资源", "看什么", "怎么补", "怎么学", "薄弱")),
+        ("emotion", ("累", "困", "疲惫", "焦虑", "烦躁", "烦", "不想学", "坚持不下去",
+                      "崩溃", "难过", "低落", "压力", "放弃", "emo", "emo了", "心情",
+                      "没动力", "泄气")),
+        ("status", ("状态", "怎么样", "诊断", "最近", "帮我看看", "学情")),
+    ]
+    _SUBJECT_KEYWORDS = {
+        "数学": ("数学", "高数", "线代", "概率"),
+        "数据结构": ("数据结构",),
+        "计算机组成原理": ("计组", "组成原理", "计算机组成"),
+        "英语": ("英语", "单词"),
+        "操作系统": ("操作系统",),
+        "计算机网络": ("计算机网络", "计网"),
+    }
+
+    def _classify_chat_intent(self, message):
+        """返回 (intent, {"subject": ..., "topic": ...})。LLM 失败/无 key 走关键词。"""
+        slots = {"subject": "", "topic": ""}
+        for name, kws in self._SUBJECT_KEYWORDS.items():
+            if any(k in message for k in kws):
+                slots["subject"] = name
+                break
+
+        if self.env["ready"] and self._llm_fail_streak < 3:
+            try:
+                text = self._call_llm(CHAT_INTENT_PROMPT, message, timeout=30, max_tokens=1024)
+                data = json.loads(text.strip().strip("`").removeprefix("json").strip())
+                intent = data.get("intent", "chat")
+                if intent not in {"status", "plan", "load", "goal", "resource", "emotion", "chat"}:
+                    intent = "chat"
+                slots["subject"] = data.get("subject") or slots["subject"]
+                slots["topic"] = data.get("topic") or ""
+                self._llm_fail_streak = 0
+                return intent, slots
+            except Exception:
+                self._llm_fail_streak += 1
+
+        # 关键词兜底
+        for intent, kws in self._INTENT_KEYWORDS:
+            if any(k in message for k in kws):
+                return intent, slots
+        return "chat", slots
+
+    # ---------- 2) 规则层执行对应 Skill（确定性数据，不落盘）----------
+
+    def _run_chat_skill(self, intent, message, slots, days, backlog):
+        lm = self.memory.get("learning_memory", {})
+        rules = self.memory.get("rules")
+        up = self.memory.get("user_profile", {})
+        plan = self.memory.get("current_plan", {})
+
+        if intent == "status":
+            return "diagnose", {"diagnosis": skills.diagnose(lm, rules)}
+
+        if intent == "plan":
+            diag = skills.diagnose(lm, rules)
+            new_plan, adjustments = skills.replan(
+                plan, diag, lm, len(self.memory.get("replanning_log", [])),
+                rules=rules, user_profile=up, backlog=backlog,
+            )
+            # 只读建议：不落盘 new_plan.json、不追加 replanning_log
+            return "replan", {
+                "diagnosis": diag,
+                "current_plan": new_plan,
+                "adjustments": adjustments,
+            }
+
+        if intent == "load":
+            if not days:
+                return None, None
+            daily_hours = float(up.get("daily_available_hours") or 6.0)
+            return "proactive_scan", skills.proactive_scan(
+                days, backlog=backlog, daily_available_hours=daily_hours, rules=rules)
+
+        if intent == "goal":
+            return "decompose_goal", skills.decompose_goal(
+                up, plan, lm, rules=rules, schedule=self.memory.get("schedule"))
+
+        if intent == "resource":
+            weak = []
+            if slots.get("topic"):
+                weak.append(slots["topic"])
+            for info in lm.get("subjects", {}).values():
+                for w in info.get("weak_topics") or []:
+                    if w not in weak:
+                        weak.append(w)
+            return "aggregate_resources", skills.aggregate_resources(weak)
+
+        if intent == "emotion":
+            return "interpret_feedback", skills.interpret_feedback(message)
+
+        return None, None
+
+    # ---------- 3) LLM 生成口语回复；失败走模板 ----------
+
+    def _call_llm(self, system_prompt, user_content, timeout=45, max_tokens=2048, temperature=0.3):
+        """通用 OpenAI 兼容调用（推理模型需要较大 max_tokens，否则思考链耗尽预算无正文）。"""
+        if not self.env["ready"]:
+            raise RuntimeError("未配置 API key")
+        url = self.env["api_base"].rstrip("/") + "/chat/completions"
+        resp = requests.post(
+            url,
+            headers={"Authorization": "Bearer " + self.env["api_key"], "Content-Type": "application/json"},
+            json={
+                "model": self.env["model_name"],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"] or ""
+
+    def _compose_chat_reply(self, message, history, intent, structured):
+        if not self.env["ready"] or self._llm_fail_streak >= 3:
+            return self._template_chat_reply(intent, structured), False
+        try:
+            msgs = [{"role": "system", "content": CHAT_REPLY_PROMPT}]
+            for h in history[-10:]:  # 只带最近 5 轮，控制 token
+                if h.get("role") in ("user", "assistant") and h.get("content"):
+                    msgs.append({"role": h["role"], "content": h["content"][:500]})
+            brief = json.dumps(self._shrink_for_prompt(intent, structured), ensure_ascii=False)
+            msgs.append({"role": "user", "content": f"【用户的话】{message}\n【结构化分析结果】{brief}"})
+            url = self.env["api_base"].rstrip("/") + "/chat/completions"
+            resp = requests.post(
+                url,
+                headers={"Authorization": "Bearer " + self.env["api_key"], "Content-Type": "application/json"},
+                json={"model": self.env["model_name"], "messages": msgs,
+                      "temperature": 0.5, "max_tokens": 2048},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            text = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+            if not text:
+                raise RuntimeError("模型只返回了思考链，没有正文")
+            self._llm_fail_streak = 0
+            return text, True
+        except Exception:
+            self._llm_fail_streak += 1
+            return self._template_chat_reply(intent, structured), False
+
+    @staticmethod
+    def _shrink_for_prompt(intent, structured):
+        """给 LLM 的结构化结果做瘦身：只留生成回答必需的字段，省 token。"""
+        if not structured:
+            return None
+        if intent == "status":
+            d = structured["diagnosis"]
+            return {
+                "overall_status": d.get("overall_status"),
+                "alert_subjects": [{
+                    "subject": a["subject"], "severity": a["severity"],
+                    "consecutive_failures": a["consecutive_failures"],
+                    "recent_7d_completion_rate": a["recent_7d_completion_rate"],
+                    "primary_cause": a.get("primary_cause"), "emotion": a.get("emotion"),
+                } for a in d.get("alert_subjects", [])],
+                "healthy_subjects": [h["subject"] for h in d.get("healthy_subjects", [])],
+            }
+        if intent == "plan":
+            return {
+                "overall_status": structured["diagnosis"].get("overall_status"),
+                "adjustments": [{
+                    "subject": a["subject"], "level": a["level"],
+                    "before": a["before"], "after": a["after"], "reason": a["reason"],
+                } for a in structured.get("adjustments", [])],
+            }
+        if intent == "load":
+            return {k: structured.get(k) for k in
+                   ("cap", "overload_count", "conclusion", "backlog_note")}
+        if intent == "goal":
+            return {k: structured.get(k) for k in
+                    ("required_modules", "covered_modules", "missing_modules",
+                     "coverage_rate", "public_courses", "recommendation")}
+        if intent == "resource":
+            return {"plan": [{"topic": p["topic"],
+                              "resources": [r["type"] + "·" + r["name"] for r in p["resources"]]}
+                             for p in structured.get("plan", [])]}
+        if intent == "emotion":
+            return {k: structured.get(k) for k in
+                    ("primary_cause", "secondary_cause", "emotion", "suggestion", "weak_topics")}
+        return None
+
+    @staticmethod
+    def _template_chat_reply(intent, structured):
+        """无 key / LLM 失败时的模板回复（仍全部基于规则引擎算出的真实数据）。"""
+        if intent == "status":
+            d = structured["diagnosis"]
+            alerts = d.get("alert_subjects", [])
+            if not alerts:
+                return "看了你的学习记忆，目前没有预警科目，节奏保持得不错，继续按计划走就行。"
+            parts = [f"{a['subject']}（{a['severity']}，连续 {a['consecutive_failures']} 天未完成）"
+                     for a in alerts]
+            top = alerts[0]
+            return (f"帮你看了下，{len(alerts)} 个科目预警：{'、'.join(parts)}。"
+                    f"主要原因像是「{top.get('primary_cause') or '暂无明确归因'}」，"
+                    f"可以先点「🔍 学习诊断」看完整分析，或者直接跟我说「帮我调整计划」。")
+        if intent == "plan":
+            adjs = structured.get("adjustments", [])
+            if not adjs:
+                return "我检查了一遍，目前没有需要调整的科目，继续执行现有计划就好。"
+            lines = [f"· {a['subject']}：{a['before']} → {a['after']}" for a in adjs[:5]]
+            return ("我按规则给你拟了调整建议（还没生效）：\n" + "\n".join(lines) +
+                    "\n确认没问题的话，点下面卡片的「应用到计划」按钮，计划才会真正更新。")
+        if intent == "load":
+            if not structured:
+                return "我还没拿到未来几天的计划数据，回到首页稍等一下再问我「未来几天忙不忙」就行。"
+            n = structured.get("overload_count", 0)
+            if n == 0:
+                return f"未来 7 天没有超载日（每日上限约 {structured.get('cap')}h），节奏可控。"
+            return (f"未来 7 天有 {n} 天超载（每日上限约 {structured.get('cap')}h）。"
+                    f"{structured.get('conclusion', '')} 详细削峰方案见下方卡片。")
+        if intent == "goal":
+            miss = structured.get("missing_modules", [])
+            if not miss:
+                return "目标模块已全部覆盖，保持节奏，进入刷题强化阶段就行。"
+            rate = structured.get("coverage_rate") or 0
+            return (f"你的目标共需 {len(structured.get('required_modules', []))} 个模块，"
+                    f"目前覆盖 {round(rate * 100)}%，还缺：{'、'.join(miss)}。"
+                    f"建议尽快把这些模块排进计划，详细拆解见卡片。")
+        if intent == "resource":
+            plan = structured.get("plan", [])
+            if not plan:
+                return "目前没识别到明确的弱知识点。你可以先在错题本给错题打上知识点标签，我再帮你聚合资源。"
+            p = plan[0]
+            names = "、".join(r["name"] for r in p["resources"])
+            return f"针对「{p['topic']}」，建议按这个顺序补：{names}。完整清单见卡片。"
+        if intent == "emotion":
+            cause = structured.get("primary_cause", "")
+            sug = structured.get("suggestion", "")
+            return f"抱抱，先别自责。我判断主要是「{cause}」。{sug} 今天哪怕只完成最小的一块，也是在往前走。"
+        return "我在。可以跟我说你的学习状态、某个学不懂的知识点，或者直接说「帮我看看最近状态」。"
 
 
 def _today():

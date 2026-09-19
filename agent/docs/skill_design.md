@@ -121,13 +121,15 @@ weight   = 科目优先级(subject_weights) × 阶段紧迫度(deadline) × 连�
 
 | 项 | 内容 |
 | --- | --- |
-| 输入 | `user_profile`（goal / target_date）+ `current_plan` + `learning_memory`（+ `rules`） |
-| 输出 | `required_modules`（需覆盖模块）/ `covered_modules`（已覆盖）/ `missing_modules`（缺失）/ `coverage_rate` / `stages[]`（阶段里程碑）/ `current_stage` / `recommendation` |
+| 输入 | `user_profile`（goal / target_date）+ `current_plan` + `learning_memory`（+ `rules` + `schedule` 课表） |
+| 输出 | `required_modules`（需覆盖模块）/ `covered_modules`（已覆盖）/ `covered_sources`（覆盖来源：计划任务 / 课表课程）/ `missing_modules`（缺失）/ `public_courses`（考研公共课英语·政治覆盖情况）/ `coverage_rate` / `stages[]`（阶段里程碑）/ `current_stage` / `recommendation` |
 | 调用条件 | 生成新计划前，检查「考研大目标」是否被完整拆解（命题背景「目标不清」） |
 
 **关键逻辑**（`skills.decompose_goal`）：从目标关键词（数学一 / 数学二 / 408）识别需覆盖的知识模块，
-对照当前计划的科目，指出「目标模块 vs 已覆盖模块」的缺口（如缺少线代、概率论、操作系统、计算机网络），
-并按下剩余天数拆「基础 / 强化 / 冲刺」三阶段里程碑。
+覆盖来源同时看**当前计划的科目**与**本学期课表课程**（如课表里有「计算机组成原理」课即视为该模块在覆盖中，
+政治类课程计入公共课「政治」）；英语 / 政治是考研公共课，必考但**不计入「目标外」**，
+单独给出覆盖情况（⚠️ 未排入时提醒补入）。据此指出「目标模块 vs 已覆盖模块」的缺口
+（如缺少线代、概率论、操作系统、计算机网络），并按下剩余天数拆「基础 / 强化 / 冲刺」三阶段里程碑。
 
 ---
 
