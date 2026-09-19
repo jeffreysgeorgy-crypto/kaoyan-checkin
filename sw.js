@@ -1,10 +1,10 @@
 // Service Worker —— 考研打卡 PWA 离线缓存
-var CACHE_VER = 'kaoyan-v20260919p2';
+var CACHE_VER = 'kaoyan-v20260919p3';
 var CORE_FILES = [
   './',
   './index.html',
   './style.css?v=20260919p1',
-  './app.js?v=20260919p2',
+  './app.js?v=20260919p3',
   './data.js?v=20260918p2',
   './manifest.json',
   './icon.svg',
