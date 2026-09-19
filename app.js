@@ -1881,32 +1881,8 @@ async function sendChatMessage(rawText) {
     });
 
   try {
-    const res = await fetch(BACKEND_URL + '/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        history: history,
-        days: buildProactiveDays(),
-        backlog: countUnmasteredMistakes(loadState()),
-      }),
-    });
-    assertApiOk(res, '自由对话 /api/chat');
-    const data = await res.json();
-    if (data.status !== 'ok') throw new Error(data.message || '对话失败');
-    const st = loadState();
-    getChatMessages(st).push({
-      id: 'a' + Date.now(),
-      role: 'agent',
-      text: data.reply,
-      type: data.type,
-      skill: data.skill,
-      payload: data.payload,
-      used_llm: data.used_llm,
-      writeback: data.writeback,
-      ts: Date.now(),
-    });
-    saveState(st);
+    const streamed = await tryStreamChat(text, history);
+    if (!streamed) await postChatOnce(text, history);
   } catch (err) {
     const st = loadState();
     getChatMessages(st).push({
@@ -1920,6 +1896,122 @@ async function sendChatMessage(rawText) {
     if (btn) { btn.disabled = false; btn.textContent = '发送'; }
     renderChat();
   }
+}
+
+/* 一次性对话（流式不可用时的回退，保持原 /api/chat 路径） */
+async function postChatOnce(text, history) {
+  const res = await fetch(BACKEND_URL + '/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: text,
+      history: history,
+      days: buildProactiveDays(),
+      backlog: countUnmasteredMistakes(loadState()),
+    }),
+  });
+  assertApiOk(res, '自由对话 /api/chat');
+  const data = await res.json();
+  if (data.status !== 'ok') throw new Error(data.message || '对话失败');
+  const st = loadState();
+  getChatMessages(st).push({
+    id: 'a' + Date.now(),
+    role: 'agent',
+    text: data.reply,
+    type: data.type,
+    skill: data.skill,
+    payload: data.payload,
+    used_llm: data.used_llm,
+    writeback: data.writeback,
+    ts: Date.now(),
+  });
+  saveState(st);
+}
+
+/* SSE 流式对话（拓展⑦）：成功渲染返回 true；未能建立流则返回 false，调用方回退一次性接口 */
+async function tryStreamChat(text, history) {
+  let res;
+  try {
+    res = await fetch(BACKEND_URL + '/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: history,
+        days: buildProactiveDays(),
+        backlog: countUnmasteredMistakes(loadState()),
+      }),
+    });
+  } catch (e) {
+    return false;
+  }
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (!res.ok || ct.indexOf('text/event-stream') < 0) return false;
+
+  const agentId = 'a' + Date.now();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let hasMsg = false;
+
+  function patchAgent(patch) {
+    const st = loadState();
+    const list = getChatMessages(st);
+    let m = list.filter(function (x) { return x.id === agentId; })[0];
+    if (!m) {
+      m = { id: agentId, role: 'agent', text: '', ts: Date.now() };
+      list.push(m);
+    }
+    Object.keys(patch).forEach(function (k) { m[k] = patch[k]; });
+    saveState(st);
+    renderChat();
+  }
+
+  function appendText(txt) {
+    const st = loadState();
+    const list = getChatMessages(st);
+    const m = list.filter(function (x) { return x.id === agentId; })[0];
+    if (!m) return;
+    m.text = (m.text || '') + txt;
+    saveState(st);
+    renderChat();
+  }
+
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = block.split('\n')
+          .filter(function (l) { return l.indexOf('data:') === 0; })
+          .map(function (l) { return l.slice(5).trim(); })
+          .join('');
+        if (!line || line === '[DONE]') continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch (e) { continue; }
+        if (ev.event === 'meta') {
+          hasMsg = true;
+          patchAgent({ type: ev.type, skill: ev.skill, payload: ev.payload, writeback: ev.writeback });
+        } else if (ev.event === 'delta') {
+          hasMsg = true;
+          appendText(ev.text || '');
+        } else if (ev.event === 'done') {
+          const st = loadState();
+          const list = getChatMessages(st);
+          const m = list.filter(function (x) { return x.id === agentId; })[0];
+          if (m) { m.used_llm = ev.used_llm; saveState(st); }
+        }
+        // 'error' 事件：忽略，交给收尾判断是否回退
+      }
+    }
+  } catch (e) {
+    // 流中断：hasMsg=false 时回退一次性接口，否则保留已渲染内容
+  }
+  return hasMsg;
 }
 
 /* 聊天里的「应用到计划」：走正式 /api/replan 写路径（new_plan + replanning_log 都同步） */

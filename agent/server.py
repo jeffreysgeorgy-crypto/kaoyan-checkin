@@ -40,7 +40,7 @@ import requests
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 import skills
 
@@ -686,6 +686,50 @@ def chat_endpoint(payload: dict):
         return {"status": "ok", **result}
     except Exception as exc:
         _log(f"[chat] 错误：{exc}")
+        return _err(str(exc))
+
+
+@app.post("/api/chat/stream")
+def chat_stream_endpoint(payload: dict):
+    """自由对话（SSE 流式，拓展⑦）：先发 meta 事件（意图/技能/卡片/写回建议），
+    再逐段发 delta 文本，最后 done。前端优先走这里，失败可回退 /api/chat（一次性）。
+
+    SSE 事件格式：data: {"event": "meta"|"delta"|"done"|"error", ...}\n\n
+    """
+    try:
+        payload = payload if isinstance(payload, dict) else {}
+        message = (payload.get("message") or "").strip()
+        if not message:
+            return _err("消息为空")
+        history = payload.get("history") or []
+        days = payload.get("days") or []
+        backlog = int(payload.get("backlog") or 0)
+
+        memory = _load_memory_safe()
+        try:
+            from agent import LearningPlannerAgent
+        except ImportError as exc:
+            _log(f"[chat/stream] agent 编排模块不可用：{exc}")
+            return _err("Agent 编排模块未就绪（openJiuwen 依赖缺失），请检查安装")
+
+        planner = LearningPlannerAgent(memory)
+
+        def generate():
+            try:
+                for ev in planner.chat_stream(message, history=history, scan_days=days, backlog=backlog):
+                    yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as exc:
+                _log(f"[chat/stream] 流式生成错误：{exc}")
+                yield "data: " + json.dumps({"event": "error", "message": str(exc)}, ensure_ascii=False) + "\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except Exception as exc:
+        _log(f"[chat/stream] 错误：{exc}")
         return _err(str(exc))
 
 

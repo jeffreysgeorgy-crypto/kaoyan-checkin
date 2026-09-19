@@ -465,34 +465,79 @@ class LearningPlannerAgent:
             intent, message, slots, scan_days or [], int(backlog or 0))
         reply, used_llm = self._compose_chat_reply(message, history, intent, structured)
 
-        if intent == "plan":
-            msg_type = "plan_pending"
-        elif structured is not None:
-            msg_type = "card"
-        else:
-            msg_type = "text"
-
-        # 拓展⑥：情绪反馈写回建议（仅建议，不落盘）。能定位到科目时才给，用户点了「记入」才写。
-        writeback = None
-        if intent == "emotion" and structured:
-            weak_topics = [w for w in (structured.get("weak_topics") or [])]
-            subject = slots.get("subject") or skills.infer_subject_from_topics(weak_topics)
-            if subject:
-                writeback = {
-                    "subject": subject,
-                    "weak_topics": weak_topics,
-                    "emotion": structured.get("emotion") or "",
-                    "reflection": message,
-                }
-
         return {
             "reply": reply,
             "intent": intent,
             "skill": skill_name,
             "payload": structured,
-            "type": msg_type,
+            "type": self._msg_type(intent, structured),
             "used_llm": used_llm,
-            "writeback": writeback,
+            "writeback": self._build_writeback(intent, slots, structured, message),
+        }
+
+    def chat_stream(self, message, history=None, scan_days=None, backlog=0):
+        """SSE 流式版 chat：先 yield 一个 meta 事件（意图/技能/卡片/写回建议），
+        再逐段 yield delta 文本，最后 yield done。LLM 不可用或失败时整段降级模板。
+        """
+        history = history or []
+        intent, slots = self._classify_chat_intent(message, history)
+        skill_name, structured = self._run_chat_skill(
+            intent, message, slots, scan_days or [], int(backlog or 0))
+
+        yield {
+            "event": "meta",
+            "intent": intent,
+            "skill": skill_name,
+            "payload": structured,
+            "type": self._msg_type(intent, structured),
+            "writeback": self._build_writeback(intent, slots, structured, message),
+        }
+
+        if not self.env["ready"] or self._llm_fail_streak >= 3:
+            yield {"event": "delta", "text": self._template_chat_reply(intent, structured)}
+            yield {"event": "done", "used_llm": False}
+            return
+
+        any_text = False
+        try:
+            recent = [{"role": h["role"], "content": (h.get("content") or "")[:500]}
+                      for h in history[-10:]]
+            brief = json.dumps(self._shrink_for_prompt(intent, structured), ensure_ascii=False)
+            user_content = f"【用户的话】{message}\n【结构化分析结果】{brief}"
+            for piece in self._call_llm_stream(CHAT_REPLY_PROMPT, user_content, history=recent):
+                if piece:
+                    any_text = True
+                    yield {"event": "delta", "text": piece}
+            if not any_text:
+                raise RuntimeError("模型只返回了思考链，没有正文")
+            self._llm_fail_streak = 0
+            yield {"event": "done", "used_llm": True}
+        except Exception:
+            self._llm_fail_streak += 1
+            if not any_text:  # 还没吐字就失败 → 整段降级模板，避免半截文本
+                yield {"event": "delta", "text": self._template_chat_reply(intent, structured)}
+            yield {"event": "done", "used_llm": False}
+
+    @staticmethod
+    def _msg_type(intent, structured):
+        if intent == "plan":
+            return "plan_pending"
+        return "card" if structured is not None else "text"
+
+    @staticmethod
+    def _build_writeback(intent, slots, structured, message):
+        """拓展⑥：情绪反馈写回建议（仅建议，不落盘）。能定位到科目时才给。"""
+        if intent != "emotion" or not structured:
+            return None
+        weak_topics = [w for w in (structured.get("weak_topics") or [])]
+        subject = slots.get("subject") or skills.infer_subject_from_topics(weak_topics)
+        if not subject:
+            return None
+        return {
+            "subject": subject,
+            "weak_topics": weak_topics,
+            "emotion": structured.get("emotion") or "",
+            "reflection": message,
         }
 
     # ---------- 1) 意图识别：LLM JSON 优先，关键词规则兜底 ----------
@@ -654,6 +699,38 @@ class LearningPlannerAgent:
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"] or ""
+
+    def _call_llm_stream(self, system_prompt, user_content, history=None, timeout=60, max_tokens=2048, temperature=0.5):
+        """流式调用：逐段 yield 模型增量正文（跳过思考链），供 SSE 使用。无 key 时抛 RuntimeError。"""
+        if not self.env["ready"]:
+            raise RuntimeError("未配置 API key")
+        messages = [{"role": "system", "content": system_prompt}]
+        for h in history or []:
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": user_content})
+        url = self.env["api_base"].rstrip("/") + "/chat/completions"
+        resp = requests.post(
+            url,
+            headers={"Authorization": "Bearer " + self.env["api_key"], "Content-Type": "application/json"},
+            json={"model": self.env["model_name"], "messages": messages,
+                  "temperature": temperature, "max_tokens": max_tokens, "stream": True},
+            timeout=timeout, stream=True,
+        )
+        resp.raise_for_status()
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                piece = (chunk.get("choices") or [{}])[0].get("delta", {}).get("content")
+                if piece:
+                    yield piece
+            except (json.JSONDecodeError, KeyError, IndexError, AttributeError):
+                continue
 
     def _compose_chat_reply(self, message, history, intent, structured):
         if not self.env["ready"] or self._llm_fail_streak >= 3:
