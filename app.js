@@ -1947,6 +1947,7 @@ async function tryStreamChat(text, history) {
   }
   const ct = (res.headers.get('content-type') || '').toLowerCase();
   if (!res.ok || ct.indexOf('text/event-stream') < 0) return false;
+  if (!res.body || typeof res.body.getReader !== 'function') return false;
 
   const agentId = 'a' + Date.now();
   const reader = res.body.getReader();
