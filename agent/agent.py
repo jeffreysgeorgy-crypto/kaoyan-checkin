@@ -460,7 +460,7 @@ class LearningPlannerAgent:
     def chat(self, message, history=None, scan_days=None, backlog=0):
         """自由对话入口。返回 {reply, intent, skill, payload, type, used_llm}。"""
         history = history or []
-        intent, slots = self._classify_chat_intent(message)
+        intent, slots = self._classify_chat_intent(message, history)
         skill_name, structured = self._run_chat_skill(
             intent, message, slots, scan_days or [], int(backlog or 0))
         reply, used_llm = self._compose_chat_reply(message, history, intent, structured)
@@ -504,17 +504,42 @@ class LearningPlannerAgent:
         "计算机网络": ("计算机网络", "计网"),
     }
 
-    def _classify_chat_intent(self, message):
-        """返回 (intent, {"subject": ..., "topic": ...})。LLM 失败/无 key 走关键词。"""
+    def _classify_chat_intent(self, message, history=None):
+        """返回 (intent, {"subject": ..., "topic": ...})。LLM 失败/无 key 走关键词。
+
+        history 提供多轮上下文：追问句（「那指针呢」）没提科目时，从最近几轮继承 subject；
+        LLM 模式下把最近上下文一并喂给意图识别器，让「那…呢」能对上上一轮。
+        """
+        history = history or []
         slots = {"subject": "", "topic": ""}
-        for name, kws in self._SUBJECT_KEYWORDS.items():
-            if any(k in message for k in kws):
-                slots["subject"] = name
-                break
+
+        def _pick_subject(text):
+            for name, kws in self._SUBJECT_KEYWORDS.items():
+                if any(k in text for k in kws):
+                    return name
+            return ""
+
+        slots["subject"] = _pick_subject(message)
+        # 当前句没提科目 → 从最近几轮上下文继承 subject（覆盖「那指针呢」这类追问）
+        if not slots["subject"]:
+            for h in reversed(history[-6:]):
+                content = (h.get("content") or "") if isinstance(h, dict) else ""
+                if content:
+                    slots["subject"] = _pick_subject(content)
+                    if slots["subject"]:
+                        break
 
         if self.env["ready"] and self._llm_fail_streak < 3:
             try:
-                text = self._call_llm(CHAT_INTENT_PROMPT, message, timeout=30, max_tokens=1024)
+                ctx = ""
+                if history:
+                    recent = history[-4:]  # 最近 2 轮
+                    ctx = "\n【对话上下文】" + "\n".join(
+                        f"{h.get('role')}: {(h.get('content') or '')[:200]}"
+                        for h in recent if isinstance(h, dict) and h.get("content"))
+                text = self._call_llm(
+                    CHAT_INTENT_PROMPT, ctx + "\n【当前消息】" + message,
+                    timeout=30, max_tokens=1024)
                 data = json.loads(text.strip().strip("`").removeprefix("json").strip())
                 intent = data.get("intent", "chat")
                 if intent not in {"status", "plan", "load", "goal", "resource", "emotion", "chat"}:
@@ -571,6 +596,9 @@ class LearningPlannerAgent:
             weak = []
             if slots.get("topic"):
                 weak.append(slots["topic"])
+            elif slots.get("subject"):
+                # 用户只说了科目、没给具体知识点 → 用科目兜底（走通用资源，而非空手）
+                weak.append(slots["subject"])
             for info in lm.get("subjects", {}).values():
                 for w in info.get("weak_topics") or []:
                     if w not in weak:
@@ -584,20 +612,26 @@ class LearningPlannerAgent:
 
     # ---------- 3) LLM 生成口语回复；失败走模板 ----------
 
-    def _call_llm(self, system_prompt, user_content, timeout=45, max_tokens=2048, temperature=0.3):
-        """通用 OpenAI 兼容调用（推理模型需要较大 max_tokens，否则思考链耗尽预算无正文）。"""
+    def _call_llm(self, system_prompt, user_content, history=None, timeout=45, max_tokens=2048, temperature=0.3):
+        """通用 OpenAI 兼容调用（推理模型需要较大 max_tokens，否则思考链耗尽预算无正文）。
+
+        history: 夹在 system 与 user 之间的对话轮次，形如 [{"role": "user"|"assistant", "content": str}]，
+                 其他 role 会被过滤。
+        """
         if not self.env["ready"]:
             raise RuntimeError("未配置 API key")
+        messages = [{"role": "system", "content": system_prompt}]
+        for h in history or []:
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": user_content})
         url = self.env["api_base"].rstrip("/") + "/chat/completions"
         resp = requests.post(
             url,
             headers={"Authorization": "Bearer " + self.env["api_key"], "Content-Type": "application/json"},
             json={
                 "model": self.env["model_name"],
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
+                "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             },
@@ -610,22 +644,14 @@ class LearningPlannerAgent:
         if not self.env["ready"] or self._llm_fail_streak >= 3:
             return self._template_chat_reply(intent, structured), False
         try:
-            msgs = [{"role": "system", "content": CHAT_REPLY_PROMPT}]
-            for h in history[-10:]:  # 只带最近 5 轮，控制 token
-                if h.get("role") in ("user", "assistant") and h.get("content"):
-                    msgs.append({"role": h["role"], "content": h["content"][:500]})
+            # 只带最近 10 条消息（约 5 轮），每条截到 500 字符，控制 token
+            recent = [{"role": h["role"], "content": (h.get("content") or "")[:500]}
+                      for h in history[-10:]]
             brief = json.dumps(self._shrink_for_prompt(intent, structured), ensure_ascii=False)
-            msgs.append({"role": "user", "content": f"【用户的话】{message}\n【结构化分析结果】{brief}"})
-            url = self.env["api_base"].rstrip("/") + "/chat/completions"
-            resp = requests.post(
-                url,
-                headers={"Authorization": "Bearer " + self.env["api_key"], "Content-Type": "application/json"},
-                json={"model": self.env["model_name"], "messages": msgs,
-                      "temperature": 0.5, "max_tokens": 2048},
-                timeout=60,
-            )
-            resp.raise_for_status()
-            text = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+            user_content = f"【用户的话】{message}\n【结构化分析结果】{brief}"
+            text = self._call_llm(
+                CHAT_REPLY_PROMPT, user_content, history=recent,
+                timeout=60, max_tokens=2048, temperature=0.5).strip()
             if not text:
                 raise RuntimeError("模型只返回了思考链，没有正文")
             self._llm_fail_streak = 0
